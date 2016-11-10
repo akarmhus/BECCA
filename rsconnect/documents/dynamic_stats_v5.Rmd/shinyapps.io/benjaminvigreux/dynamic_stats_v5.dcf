@@ -1,0 +1,10 @@
+name: dynamic_stats_v5
+account: benjaminvigreux
+server: shinyapps.io
+appId: 130105
+bundleId: 579395
+url: https://benjaminvigreux.shinyapps.io/dynamic_stats_v5/
+when: 1475840096.4221
+asMultiple: TRUE
+asStatic: FALSE
+ignoredFiles: BECCA_3_7.Rmd|BECCA_3_8.Rmd|BECCA_3_9.Rmd|BECCA_stm.rmd|BECCA_stm_offline.rmd|Ben_stuff.Rmd|Common Deliverable with fixed presentation of topics.Rmd|Common Deliverable without Descriptive Summary - Functioning.Rmd|Common Deliverable.Rmd|new_layout_3_1_AlmostThere.Rmd|new_layout_3_2_AlmostThere.Rmd|new_layout_3_3_AlmostThere.Rmd|new_layout_3_4_AlmostThere.Rmd|new_layout_3_5_post_conf.Rmd|new_layout_3_6_post_conf.Rmd|test.rmd|undp_dashboard12.Rmd|undp_dashboard15.Rmd
