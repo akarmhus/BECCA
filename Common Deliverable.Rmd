@@ -1,0 +1,356 @@
+---
+title: "Common Deliverable"
+output: 
+ flexdashboard::flex_dashboard:
+    orientation: rows
+    runtime: shiny
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r, include=FALSE}
+## Load Packages
+
+library(flexdashboard)
+library(shiny)
+library(quanteda)
+library(RYandexTranslate)
+library(stm)
+library(wordcloud)
+library(htmlwidgets)
+library(stmBrowser)
+library(devtools)
+library(jsonlite)
+```
+
+```{r, include=FALSE, echo=TRUE}
+##  SETUP
+
+#setwd("C:/Users/charl/Dropbox/UNDP & Dissertation/Deliverable_Master")
+
+# N.B: Knitr CANNOT DEAL with the "setwd" function. Even if the WD is already correct, if it reads "setwd" it will reset it to some random temp directory. Set your working directory before you knit, and it should be fine.
+
+##  Load Data
+
+dataset <- "moldova"
+save("dataset", file = "dataset.txt")
+
+# This needs to be set for "Data Cleaning.R" to work. (Choose from "kyrgyzstan", "moldova", "unicef", "serbia", "tajikistan", "yemen")
+
+## Switchboard
+
+switch_t <- 0 # Translation
+switch_c <- 1 # Corpus
+save(list = c("switch_c","switch_t"), file = "switches.RData")
+
+if (!exists("clean",where = .GlobalEnv))
+  {source("Data Cleaning.R", echo = TRUE)}
+```
+
+```{r, include=FALSE, echo = TRUE}
+##  Descriptive Statistics 
+
+# Currently works for Moldova, and will for Kyrgyzstan when we have more characters for Yandex.
+
+source("Descriptive Stat Builder.R", echo = TRUE)
+
+search <- search()
+if (!is.na(match("clean", search))) {detach(clean)}
+if (!is.na(match("data", search))) {detach(data)}
+if (is.na(match("clean", search))) {attach(clean)}
+```
+
+Topics {.sidebar}
+=============================================================================
+
+Topics present in the stories and demographic groups
+
+```{r}
+selectInput("list_of_topics", label = "Choose a topic:",
+            choices = c("education", "health", "corruption", "migration"))
+
+selectInput("gender", label = "Choose gender:", choices = (c("All", "Female", "Male")))
+
+selectizeInput("age", label = "Choose age groups:", choices = (c("Under 17", "17-29", "30-44", "45-60", "Over 60")), multiple = TRUE)
+
+selectizeInput("education", label = "Choose education level:", choices = c("No formal education", "Primary education", "Secondary education", "technical/vocational education", "university degree", "master and/or phd"), multiple = TRUE)
+
+selectizeInput("employment", label = "Choose employment status:", choices = c("student", "salaried professional", "self employed/entrepreneur", "volunteer", "unemployed", "out of the workforce", "retired", "other"), multiple = TRUE)
+
+selectizeInput("where", label = "Choose area:", choices = c("Urban", "Rural"), multiple = TRUE)
+
+selectizeInput("levelofincome", label = "Choose income level:", choices = c("less than others in my community", "more or less the same", "more than others in the community"), multiple = TRUE)
+```
+
+Search a Key Word in Context
+
+```{r}
+textInput("KWICInput", label = NULL, value = "job", placeholder = "e.g. job")
+```
+
+
+Column
+-----------------------------------------------------------------------
+
+### Frequency of the topic depending on the demographic
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+Topic overview {data-navmenu="Kyrgyzstan"} 
+==============================================================================
+
+
+Text analysis {data-navmenu="Kyrgyzstan"}
+==============================================================================
+
+Stories {data-navmenu="Kyrgyzstan"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Kyrgyzstan"}
+==============================================================================
+
+
+Topic overview {data-navmenu="Moldova"}
+==============================================================================
+
+Row {data-height=650}
+------------------------------------------------------------------
+
+### Wordclouds
+
+```{r, include=FALSE}
+moldova <- read.csv("Moldova_1.csv")
+
+moldovatext <- Corpus(VectorSource(moldova$"Your.experience"))
+moldovatext <- tm_map(moldovatext, removePunctuation)
+
+for(j in seq(moldovatext))   
+{   
+  moldovatext[[j]] <- gsub("/", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("@", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("\\|", " ", moldovatext[[j]]) 
+}  
+
+moldovatext <- tm_map(moldovatext, removeNumbers)  
+moldovatext <- tm_map(moldovatext, tolower)
+moldovatext <- tm_map(moldovatext, removeWords, stopwords("english")) 
+
+library(SnowballC)   
+moldovatext <- tm_map(moldovatext, stemDocument) 
+moldovatext <- tm_map(moldovatext, stripWhitespace) 
+
+inspect(moldovatext)
+
+moldovatext <- tm_map(moldovatext, PlainTextDocument) 
+
+## Stage the data
+
+dtm <- DocumentTermMatrix(moldovatext)   
+dtm   
+inspect(dtm)
+
+tdm <- TermDocumentMatrix(moldovatext)   
+tdm   
+
+freq <- colSums(as.matrix(dtm))   
+length(freq)  
+
+ord <- order(freq) 
+
+freq[head(ord)] 
+freq[tail(ord)] 
+
+head(table(freq), 20)  
+tail(table(freq), 20)  
+
+findFreqTerms(dtm, lowfreq=20)
+
+wf <- data.frame(word=names(freq), freq=freq)   
+head(wf)  
+
+library(ggplot2)   
+p <- ggplot(subset(wf, freq>20), aes(word, freq))    
+p <- p + geom_bar(stat="identity")   
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))   
+p
+
+library(wordcloud) 
+wordcloud(names(freq), freq, min.freq=20)
+
+Text analysis {data-navmenu="Moldova"}
+==============================================================================
+```{r, include=FALSE}
+temp<-textProcessor(documents=clean$texts,metadata=clean)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+meta <-out$meta
+meta$EntryDate <- as.Date(meta$EntryDate)
+meta$DQ2.Gender <- as.factor(meta$DQ2.Gender)
+meta$DQ3.Education <- as.factor(meta$DQ3.Education)
+meta$DQ1.Age <- as.factor(meta$DQ1.Age)
+```
+
+
+```{r, include=FALSE}
+#Run STM. We can include more metadata if we want
+ferdigB <- stm(docs, vocab, 8, prevalence  =~ EntryDate + DQ1.Age + DQ3.Education + DQ2.Gender, data = meta)
+```
+
+
+### Cluster analysis
+
+```{r, include = FALSE}
+dtmss <- removeSparseTerms(dtm, 0.95) # This makes a matrix that is only 15% empty space, maximum.   
+inspect(dtmss) 
+
+library(cluster)   
+d <- dist(t(dtmss), method="euclidian")   
+fit <- hclust(d=d, method="ward")   
+fit   
+
+plot(fit, hang=-1)  
+
+plot.new()
+plot(fit, hang=-1)
+groups <- cutree(fit, k=5)   # "k=" defines the number of clusters you are using   
+rect.hclust(fit, k=5, border="red")
+
+library(fpc)   
+d <- dist(t(dtmss), method="euclidian")   
+kfit <- kmeans(d, 2)   
+
+```
+
+```{r}
+clusplot(as.matrix(d), kfit$cluster, color=T, shade=T, labels=2, lines=0) 
+```
+
+Labels STM {data-navmenu="Moldova"}
+===================================== 
+```{r}
+labelTopics(ferdigB, topics=NULL, n = 7, frexweight = 0.5)
+```
+
+Clouds STM {data-navmenu="Moldova"}
+==================================================
+```{r, echo=FALSE}
+cloud(ferdigB, topic=1, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 1")
+cloud(ferdigB, topic=2, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 2")
+cloud(ferdigB, topic=3, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 3")
+cloud(ferdigB, topic=4, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 4")
+cloud(ferdigB, topic=5, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 5")
+cloud(ferdigB, topic=6, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 6")
+cloud(ferdigB, topic=7, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 7")
+cloud(ferdigB, topic=8, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 8")
+```
+
+Explore STM {data-navmenu="Moldova"}
+===================================== 
+```{r, echo=FALSE}
+stmBrowser_widget(ferdigB, data=meta, c("EntryDate","DQ1.Age","DQ3.Education", "DQ2.Gender"),text="texts", labeltype='frex')
+```
+
+Stories {data-navmenu="Moldova"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Moldova"}
+==============================================================================
+
+### Key Words in Context
+
+```{r}
+renderPrint({
+  options(width = 200)
+  print(as.data.frame(kwic(corpus, input$KWICInput)[,3:5]), row.names = F)
+})
+```
+
+
+Topic overview {data-navmenu="Serbia"}
+==============================================================================
+
+
+Text analysis {data-navmenu="Serbia"}
+==============================================================================
+
+Stories {data-navmenu="Serbia"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Serbia"}
+==============================================================================
+
+
+Topic overview {data-navmenu="Tajikistan"}
+==============================================================================
+
+Text analysis {data-navmenu="Tajikistan"}
+==============================================================================
+
+Stories {data-navmenu="Tajikistan"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Tajikistan"}
+==============================================================================
+
+
+Topic overview {data-navmenu="Yemen"}
+==============================================================================
+
+Text analysis {data-navmenu="Yemen"}
+==============================================================================
+
+Stories {data-navmenu="Yemen"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Yemen"}
+==============================================================================
+
+
+### Chart A
+
+```{r}
+
+```
+
+### Chart B
+
+```{r}
+
+```
+
+### Chart C
+
+```{r}
+
+```
+

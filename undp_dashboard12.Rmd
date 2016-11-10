@@ -1,0 +1,710 @@
+---
+title: "UNDP-UCL"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+    logo: undp48.png
+    favicon: undp48.png
+runtime: shiny
+---
+
+Topics {.sidebar}
+=====================================
+
+
+```{r sidebar: definition of parameters}
+
+selectInput("Country", label = "Country",
+            choices = c("Yemen","Kirghizistan","Moldova","Tajikistan","Serbia"),
+            selected = "Yemen")
+sliderInput("Cut_days", label = "Window length (days)",
+            min = 3, max = 30, value = 7, step = 1)
+
+# selectInput("list_of_topics", label = "Choose a topic:", 
+#             choices = c("education", "health", "corruption", "migration"))
+# 
+# selectInput("gender", label = "Choose gender:", choices = (c("All", "Female", "Male")))
+# 
+# selectizeInput("age", label = "Choose age groups:", 
+#                choices = (c("Under 17", "17-29","30-44", "45-60", "Over 60")), 
+#                multiple = TRUE)
+# 
+# selectizeInput("education", label = "Choose education level:", 
+#                choices = c("No formal education", "Primary education", 
+#                            "Secondary education", "technical/vocational education",
+#                            "university degree", "master and/or phd"),
+#                multiple = TRUE)
+# 
+# selectizeInput("employment", label = "Choose employment status:", 
+#                choices = c("student", "salaried professional", 
+#                            "self employed/entrepreneur", "volunteer", "unemployed",
+#                            "out of the workforce", "retired", "other"),
+#                multiple = TRUE)
+# 
+# selectizeInput("where", label = "Choose area:", 
+#                choices = c("Urban", "Rural"), 
+#                multiple = TRUE)
+# 
+# selectizeInput("levelofincome", label = "Choose income level:", 
+#                choices = c("less than others in my community", "more or less the same",
+#                            "more than others in the community"),
+#                multiple = TRUE)
+
+textInput("KWICInput", label = NULL, value = "job", placeholder = "e.g. job")
+
+```
+
+```{r load required R packages}
+# Required packages
+library(tm)
+library(flexdashboard)
+library(shiny)
+library(quanteda)
+library(RYandexTranslate)
+library(stm)
+library(wordcloud)
+library(htmlwidgets)
+library(stmBrowser)
+library(devtools)
+library(jsonlite)
+library(SnowballC)
+library(ggplot2)
+library(cluster)
+library(fpc)
+
+require(xlsx)
+require(plotly)
+require(likert)
+require(grid)
+require(RYandexTranslate)
+```
+
+
+```{r Load Moldova Dataset, echo=FALSE, include = FALSE}
+##  SETUP
+# N.B: Knitr CANNOT DEAL with the "setwd" function. Even if the WD is already correct, if it reads "setwd" it will reset it to some random temp directory. Set your working directory before you knit, and it should be fine.
+##  Load Data
+
+dataset <- "moldova"
+save("dataset", file = "dataset.txt")
+
+# This needs to be set for "Data Cleaning.R" to work. (Choose from "kyrgyzstan", "moldova", "unicef", "serbia", "tajikistan", "yemen")
+```
+
+```{r Translation Switch, echo=FALSE, include = FALSE}
+## Switchboard
+
+switch_t <- 0 # Translation
+switch_c <- 1 # Corpus
+save(list = c("switch_c","switch_t"), file = "switches.RData")
+
+if (!exists("clean",where = .GlobalEnv))
+  {source("Data Cleaning.R")}
+```
+
+```{r Descriptive Stats, echo = FALSE, include = FALSE}
+##  Descriptive Statistics 
+
+# Currently works for Moldova, and will for Kyrgyzstan when we have more characters for Yandex.
+
+# source("Descriptive Stat Builder.R") # ERROR: Errorin eval(expr, envir, enclos) : object 'DQ1.Age' not found
+
+##  Attach clean dataset
+search <- search()
+if (!is.na(match("clean", search))) {detach(clean)}
+if (!is.na(match("data", search))) {detach(data)}
+if (is.na(match("clean", search))) {attach(clean)}
+```
+
+```{r Setup initial parameters CA, echo = FALSE, include = FALSE}
+source("undp_setup.R") # Initial parameters
+```
+
+```{r Read data bases CA, echo = FALSE, include = FALSE}
+source("undp_read.R") # Read data bases and translate foreign words of new records
+```
+
+```{r Preprocess data CA, echo = FALSE, include = FALSE}
+source("undp_preprocess.R") # Clean data bases
+```
+
+MAP {data-orientation=rows}
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+
+### World Map
+
+```{r}
+
+renderPlotly({
+
+mycountries <- character(Ncountry)
+mycodes <- character(Ncountry)
+avg_feeling <- numeric(Ncountry)
+pos_feeling <- numeric(Ncountry)
+neg_feeling <- numeric(Ncountry)
+neu_feeling <- numeric(Ncountry)
+N_feeling <- numeric(Ncountry)
+minlat=100
+maxlat=-100
+minlon=200
+maxlon=-200
+for (ncountry in 1:Ncountry){
+  mycountries[ncountry] <- Country[[ncountry]]$country
+  mycodes[ncountry] <- Country[[ncountry]]$countrycode
+  avg_feeling[ncountry] <- mean(data[[ncountry]]$feeling_num,na.rm=TRUE)
+  pos_feeling[ncountry] <- sum(data[[ncountry]]$feeling_num>0,na.rm=TRUE)
+  neg_feeling[ncountry] <- sum(data[[ncountry]]$feeling_num<0,na.rm=TRUE)
+  neu_feeling[ncountry] <- sum(data[[ncountry]]$feeling_num==0,na.rm=TRUE)
+  N_feeling[ncountry] <- length(data[[ncountry]]$feeling_num)
+  minlat <- min(minlat,Country[[ncountry]]$latmin)
+  minlon <- min(minlon,Country[[ncountry]]$lonmin)
+  maxlat <- max(maxlat,Country[[ncountry]]$latmax)
+  maxlon <- max(maxlon,Country[[ncountry]]$lonmax)
+}
+
+df <- data.frame(country=mycountries,
+                 code=mycodes,
+                 feeling=avg_feeling,
+                 positive=pos_feeling,
+                 negative=neg_feeling,
+                 neutral=neu_feeling,
+                 N=N_feeling)
+
+df$hover <- with(df,paste(toupper(country)," ",
+                          "<br>Average feeling: ",format(feeling,digits=2),
+                          "<br>Negative: ",format(100*negative/N,digits=0),"%",
+                          "<br>Neutral: ",format(100*neutral/N,digits=0),"%",
+                          "<br>Positive: ",format(100*positive/N,digits=0),"%",
+                          sep=""))
+# light grey boundaries
+l <- list(color = toRGB("grey"), width = 0.5)
+
+# specify map projection/options
+g <- list(
+  showframe = FALSE,
+  showcoastlines = TRUE,
+  projection = list(type = 'Mercator'),
+  showland = TRUE,
+  landcolor = toRGB("grey83"),
+  #subunitcolor = toRGB("white"),
+  countrycolor = toRGB("white"),
+  showlakes = TRUE,
+  lakecolor = toRGB("white"),
+  #showsubunits = TRUE,
+  showcountries = TRUE,
+  resolution = 50,
+  countrywidth = 0.5,
+  subunitwidth = 0.5,
+  lonaxis=list(showgrid=TRUE,range=c(minlon,maxlon)),
+  lataxis=list(showgrid=TRUE,range=c(minlat,maxlat)),
+  showlakes=TRUE,
+  lakecolor = toRGB("white")
+  #  showcountry=TRUE
+)
+
+  plot_ly(df,
+        z = feeling,
+        locations = code,
+        type = 'choropleth',
+        color = feeling,
+        colors = c("red","yellow","blue","green"), # 'Blues',
+        marker = list(line = l),
+        colorbar = list(title = 'Feeling', 
+                        #yanchor="bottom",xanchor="left",
+                        # x=0, y=0,
+                        len=1),
+        hoverinfo = "text", #  "a",..., "text", "name" with a "+" OR "all" or "none".
+        text=hover
+) %>%
+  layout(title = '',
+         geo = g) %>%
+  add_trace(type="scattergeo",
+          locations = code, text = country, mode="text")
+
+})
+```
+
+### Countries data
+
+```{r}
+overview <- read.table("countries.csv", header = TRUE, sep = ";", dec = ",")
+knitr::kable(overview)
+```
+
+
+### Time trend of stories
+
+```{r}
+
+renderPlot({
+
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+
+    feeling_all <- factor(feeling_all)
+    mindate <- min(timedate_num_all)
+    maxdate <- max(timedate_num_all)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the whole time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(timedate_num_all,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day 
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    # Plot of percentage of answers over time by countries
+    dflik <- data.frame(Country_all)
+    names(dflik) <- "All countries"
+    lik <- likert(dflik,grouping=timedate_cut)
+    plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",
+         plot.percents=FALSE,include.center=FALSE,centered=FALSE,
+         plot.percent.low = FALSE, plot.percent.high = FALSE, plot.percent.neutral = FALSE,
+         color=rainbow(Ncountry),
+         label.completed = "Stories", label.missing = "NA",
+         group.order=rev(levels(timedate_cut)),
+         xlab="# Stories")
+
+})
+```
+
+
+
+
+TIME TREND {data-orientation=columns}
+=====================================   
+
+
+Column {data-width=600}
+-------------------------------------
+
+### Likert Plot
+
+```{r}
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  
+  if (ncountry>0){ # Single countries
+    
+    # Duplicated because not saved from the previous chunk
+    mindate <- min(data[[ncountry]]$timedate_num)
+    maxdate <- max(data[[ncountry]]$timedate_num)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day (add Year?)
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    # End duplication
+    
+    # Likert plots
+    
+    dflik <- data.frame(data[[ncountry]]$feeling)
+    # Change name of the variable because printed in the plot
+    names(dflik) <- Country[[ncountry]]$country
+    lik <- likert(dflik,grouping=timedate_cut)
+    # Using include.histrogram = TRUE is bugging with ggtitle(title) and ordering of the histogram
+    # Note that + ggtitle(Country[[ncountry]]$country) does not work when including histogram
+    plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",group.order=rev(levels(timedate_cut)),
+         label.completed = "Stories", label.missing = "NA",
+         xlab="# Stories")
+    
+    
+    
+  } else { # All countries 
+    feeling_all <- factor(feeling_all)
+    mindate <- min(timedate_num_all)
+    maxdate <- max(timedate_num_all)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the whole time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(timedate_num_all,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day 
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    # Plot of percentage of answers over time by countries
+    dflik <- data.frame(Country_all)
+    names(dflik) <- "All countries"
+    lik <- likert(dflik,grouping=timedate_cut)
+    plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",
+         plot.percents=FALSE,include.center=FALSE,centered=FALSE,
+         plot.percent.low = FALSE, plot.percent.high = FALSE, plot.percent.neutral = FALSE,
+         color=rainbow(Ncountry),
+         label.completed = "Stories", label.missing = "NA",
+         group.order=rev(levels(timedate_cut)),
+         xlab="# Stories")
+  }
+}) # End of renderPlot
+
+```
+
+Column {data-width=400}
+-------------------------------------
+
+
+### Scatter plot
+
+```{r}
+
+# Define input parameters to be exchanged
+#
+# Cut days is the window (in days) for analyzing time series
+
+reactCut_days <- reactive(input$Cut_days)
+reactncountry <- reactive({
+  switch(input$Country,"All"={ncountry<-0}, "Yemen"={ncountry<-1},
+         "Kirghizistan"={ncountry<-2}, "Moldova"={ncountry<-3},
+         "Tajikistan"={ncountry<-4},"Serbia"={ncountry<-5})
+})  
+```
+
+```{r}
+renderPlot({
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  if (ncountry>0){ # Single countries
+    
+    feeling_values <- as.numeric(levels(as.factor(data[[ncountry]]$feeling_num)))
+    
+    # Convert to data.frame because of ggplot
+    df <- data.frame(timedate=data[[ncountry]]$timedate,feeling=data[[ncountry]]$feeling)
+    # Add some jitter to the feeling to avoid overlap of dots
+    p <- ggplot(na.omit(df),aes(x=timedate,y=feeling))
+    p <- p + geom_point(position=position_jitter(width=0,height=0.075))
+    p <- p + ggtitle(Country[[ncountry]]$country)
+    p <- p + labs(x="Time",y="Feeling")
+    print(p) # Mandatory if run with source, otherwise it does not print
+  }
+})
+```  
+
+### Mean Trend
+
+```{r}
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  
+  if (ncountry>0){ # Single countries
+    
+    
+    # Duplicated because not saved from the previous chunk
+    feeling_values <- as.numeric(levels(as.factor(data[[ncountry]]$feeling_num)))
+    
+    #
+    # Time series of average feeling
+    #
+    mindate <- min(data[[ncountry]]$timedate_num)
+    maxdate <- max(data[[ncountry]]$timedate_num)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day (add Year?)
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    tab <- table(data[[ncountry]]$feeling,timedate_num_cut)
+    
+    # Compute Weighted mean and standard deviation inside bins
+    feeling_mean <- rep(0,Ncut)
+    feeling_std <- rep(0,Ncut)
+    for (ncut in 1:Ncut){
+      feeling_mean[ncut] <- weighted.mean(feeling_values,tab[,ncut])
+      feeling_std[ncut] <- sqrt(sum(tab[,ncut] * (feeling_values - feeling_mean[ncut])^2)/(sum(tab[,ncut])*(sum(tab[,ncut])-1)))
+    }
+    
+    p <- qplot(timedate_cutcenters,feeling_mean)
+    p <- p + geom_errorbar(aes(x=timedate_cutcenters, ymin=feeling_mean-feeling_std, ymax=feeling_mean+feeling_std))
+    p <- p + ggtitle(Country[[ncountry]]$country)
+    p <- p + labs(x="Time",y="Feeling")
+    print(p) # Mandatory if run with source, otherwise it does not print
+    
+    # Copy data[[ncountry]] into datadum because error in lm otherwise
+    datadum <- data[[ncountry]]
+    # Test by ANOVA whether the means in the bins are all equal
+    fit <- lm(formula = datadum$feeling_num ~ timedate_num_cut)
+    res <- anova(fit)
+    
+    print(paste("p-value of Test equal means (ANOVA):",res$`Pr(>F)`[1]))
+    
+  } # End of if (ncountry>0)
+  
+}) # End of renderPlot()
+
+``` 
+
+
+TOPICS
+==============================================================================
+
+Row {data-height=650}
+------------------------------------------------------------------
+
+```{r, include=FALSE}
+moldova <- read.csv("Moldova_1.csv")
+
+moldovatext <- Corpus(VectorSource(moldova$"Your.experience"))
+moldovatext <- tm_map(moldovatext, removePunctuation)
+
+for(j in seq(moldovatext))   
+{   
+  moldovatext[[j]] <- gsub("/", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("@", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("\\|", " ", moldovatext[[j]]) 
+}  
+
+moldovatext <- tm_map(moldovatext, removeNumbers)  
+moldovatext <- tm_map(moldovatext, tolower)
+moldovatext <- tm_map(moldovatext, removeWords, stopwords("english")) 
+
+# library(SnowballC)   
+moldovatext <- tm_map(moldovatext, stemDocument) 
+moldovatext <- tm_map(moldovatext, stripWhitespace) 
+
+moldovatext <- tm_map(moldovatext, PlainTextDocument) 
+
+## Stage the data
+
+dtm <- DocumentTermMatrix(moldovatext)   
+dtm   
+
+tdm <- TermDocumentMatrix(moldovatext)   
+tdm   
+
+freq <- colSums(as.matrix(dtm))   
+length(freq)  
+
+ord <- order(freq) 
+
+freq[head(ord)] 
+freq[tail(ord)] 
+
+head(table(freq), 20)  
+tail(table(freq), 20)  
+
+findFreqTerms(dtm, lowfreq=20)
+
+wf <- data.frame(word=names(freq), freq=freq)   
+head(wf)  
+
+```
+
+### Wordclouds
+
+```{r}
+#(wordcloud) 
+wordcloud(names(freq), freq, min.freq=20)
+```
+
+
+### Word frequency
+```{r}
+# library(ggplot2)   
+p <- ggplot(subset(wf, freq>20), aes(word, freq))    
+p <- p + geom_bar(stat="identity")   
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))   
+p
+```
+
+
+
+TEXT ANALYSIS
+==============================================================================
+
+```{r, include=FALSE}
+temp<-textProcessor(documents=clean$texts,metadata=clean)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+meta <-out$meta
+meta$EntryDate <- as.Date(meta$EntryDate)
+meta$DQ2.Gender <- as.factor(meta$DQ2.Gender)
+meta$DQ3.Education <- as.factor(meta$DQ3.Education)
+meta$DQ1.Age <- as.factor(meta$DQ1.Age)
+
+```
+
+
+```{r, include=FALSE}
+#Run STM. We can include more metadata if we want
+names(clean)
+ferdigB <- stm(docs, vocab, 8, prevalence  =~ EntryDate + DQ1.Age + DQ3.Education + DQ2.Gender + Q7.Score, data = meta)
+```
+
+
+### Cluster analysis
+
+```{r, include = FALSE}
+dtmss <- removeSparseTerms(dtm, 0.95) # This makes a matrix that is only 15% empty space, maximum.   
+inspect(dtmss) 
+
+# library(cluster)   
+d <- dist(t(dtmss), method="euclidian")   
+fit <- hclust(d=d, method="ward")   
+fit   
+
+plot(fit, hang=-1)  
+
+plot.new()
+plot(fit, hang=-1)
+groups <- cutree(fit, k=5)   # "k=" defines the number of clusters you are using   
+rect.hclust(fit, k=5, border="red")
+
+# library(fpc)   
+d <- dist(t(dtmss), method="euclidian")   
+kfit <- kmeans(d, 2)   
+
+```
+
+```{r}
+clusplot(as.matrix(d), kfit$cluster, color=T, shade=T, labels=2, lines=0) 
+```
+
+LABELS
+===================================== 
+```{r}
+labelTopics(ferdigB, topics=NULL, n = 7, frexweight = 0.5)
+```
+
+WORD CLOUDS
+==================================================
+```{r, echo=FALSE}
+cloud(ferdigB, topic=1, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 1")
+cloud(ferdigB, topic=2, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 2")
+cloud(ferdigB, topic=3, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 3")
+cloud(ferdigB, topic=4, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 4")
+cloud(ferdigB, topic=5, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 5")
+cloud(ferdigB, topic=6, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 6")
+cloud(ferdigB, topic=7, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 7")
+cloud(ferdigB, topic=8, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+text(x=0.5, y=1, "Topic 8")
+```
+
+EXPLORE
+===================================== 
+```{r STM Browser, echo=FALSE}
+stmBrowser_widget(ferdigB, data=meta, c("EntryDate","DQ1.Age","DQ3.Education", "DQ2.Gender", "Q7.Score"),text="texts", labeltype='frex') 
+```
+
+
+STORIES
+==============================================================================
+
+KEY WORDS IN CONTEXT
+==============================================================================
+
+### Key Words in Context
+
+```{r Moldova KWIC}
+renderPrint({
+  options(width = 200)
+  print(as.data.frame(kwic(corpus, input$KWICInput)[,3:5]), row.names = F)
+})
+```
+

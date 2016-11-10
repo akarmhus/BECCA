@@ -1,0 +1,2340 @@
+---
+title: "New Layout"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: cerulean
+    logo: undp48.png
+    orientation: rows
+    runtime: shiny
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r Load Packages, include=FALSE}
+require(flexdashboard)
+require(tm)
+require(shiny)
+require(shinyBS)
+require(quanteda)
+require(RYandexTranslate)
+require(stm)
+require(wordcloud)
+require(htmlwidgets)
+require(stmBrowser)
+require(devtools)
+require(jsonlite)
+require(SnowballC)
+require(ggplot2)
+require(cluster)
+require(fpc)
+require(xlsx)
+require(plotly)
+require(likert)
+require(grid)
+require(skmeans)
+require(knitr)
+require(ggtern)
+
+
+devtools::install_github("timelyportfolio/stmBrowser@htmlwidget") # This needs to be installed once
+
+
+```
+
+```{r Translation Switch, include=FALSE, echo=TRUE}
+## Switchboard
+
+switch_t <- 0 # Translation
+switch_c <- 1 # Corpus
+save(list = c("switch_c","switch_t"), file = "switches.RData")
+
+```
+
+```{r Load Datasets, include = FALSE, echo = FALSE}
+
+##  File Structure - Pleeeeaeease tell me if you mess with this ~Charlie.
+  #/Working Dir
+    #/dynamic_stats_v3.R
+    #/factor_to_integer.R
+    #/sort_signifiers.R
+    #/namegetter.R
+    #/[dataset]_factornames.RData - {No longer needed, namegetter.R returns a function not a file.}.
+    #/clean_data
+      #/[dataset]_clean.RData
+      #/texts
+        #/[dataset]_translated_texts.RData
+      #/corpus/
+        #/[dataset]_corpus.RData
+      #/subsets
+        #/[dataset]_subsets.RData
+
+knitr::opts_knit$set(root.dir = normalizePath('./'))
+# print(opts_knit$get("root.dir"))
+
+##  Load All Datasets
+
+wd <- getwd()
+dataset <- c("kyrgyzstan", "moldova", "unicef", "serbia", "tajikistan", "yemen")
+# print(dataset)
+
+for (d in 1:length(dataset)){
+  load(paste0(wd,"/clean_data/",dataset[d],"_clean.RData"))
+  dataset <- c("kyrgyzstan", "moldova", "unicef", "serbia", "tajikistan", "yemen")
+  assign(paste0(dataset[d]),clean)
+}
+
+##  Choose Dataset
+
+dataset <- "moldova" ## Pick one!
+load(paste0(wd,"/clean_data/",dataset,"_clean.RData"))
+load(paste0(wd,"/clean_data/texts/",dataset,"_translated_texts.RData"))
+load(paste0(wd,"/clean_data/subsets/",dataset,"_subsets.RData"))
+save("dataset", file = "dataset.txt")
+
+##  Attach to search dir
+
+search <- search()
+if (!is.na(match("clean", search))) {detach(clean)}
+if (!is.na(match("data", search))) {detach(data)}
+search <- search()
+if (is.na(match("clean", search))) {attach(clean)}
+# knitr::opts_knit$set(root.dir = normalizePath('../'))
+# print(opts_knit$get("root.dir"))
+
+```
+
+```{r Load All Corpuses and Texts}
+## Load all Corpuses
+load(paste0(wd,"/clean_data/corpus/moldova_corpus.RData"))
+moldova_corpus <- corpus
+load(paste0(wd,"/clean_data/corpus/kyrgyzstan_corpus.RData"))
+kyrgyzstan_corpus <- corpus
+load(paste0(wd,"/clean_data/corpus/serbia_corpus.RData"))
+serbia_corpus <- corpus
+load(paste0(wd,"/clean_data/corpus/tajikistan_corpus.RData"))
+tajikistan_corpus <- corpus
+load(paste0(wd,"/clean_data/corpus/yemen_corpus.RData"))
+yemen_corpus <- corpus
+load(paste0(wd,"/clean_data/corpus/unicef_corpus.RData"))
+unicef_corpus <- corpus
+
+# names(summary(yemen_corpus))
+# names(summary(tajikistan_corpus))
+load(paste0(wd,"/clean_data/texts/moldova_translated_texts.RData"))
+moldova_texts_eng <- texts_eng
+moldova_texts_org <- texts_org
+moldova_titles_eng <- titles_eng
+moldova_titles_org <- titles_org
+
+load(paste0(wd,"/clean_data/texts/kyrgyzstan_translated_texts.RData"))
+kyrgyzstan_texts_eng <- texts_eng
+kyrgyzstan_texts_org <- texts_org
+kyrgyzstan_titles_eng <- titles_eng
+kyrgyzstan_titles_org <- titles_org
+
+load(paste0(wd,"/clean_data/texts/serbia_translated_texts.RData"))
+serbia_texts_eng <- texts_eng
+serbia_texts_org <- texts_org
+serbia_titles_eng <- titles_eng
+serbia_titles_org <- titles_org
+
+load(paste0(wd,"/clean_data/texts/tajikistan_translated_texts.RData"))
+tajikistan_texts_eng <- texts_eng
+tajikistan_texts_org <- texts_org
+tajikistan_titles_eng <- titles_eng
+tajikistan_titles_org <- titles_org
+
+load(paste0(wd,"/clean_data/texts/yemen_translated_texts.RData"))
+yemen_texts_eng <- texts_eng
+yemen_texts_org <- texts_org
+yemen_titles_eng <- titles_eng
+yemen_titles_org <- titles_org
+
+load(paste0(wd,"/clean_data/texts/unicef_translated_texts.RData"))
+unicef_texts_eng <- texts_eng
+unicef_texts_org <- texts_org
+unicef_titles_eng <- titles_eng
+unicef_titles_org <- titles_org
+
+
+# sum(is.na(unicef_texts_eng))
+
+
+```
+
+```{r Setup initial parameters CA, echo = FALSE, include = FALSE}
+# source("undp_setup.R") # Initial parameters
+```
+
+```{r Read data bases CA, echo = FALSE, include = FALSE}
+# source("undp_read.R") # Read data bases and translate foreign words of new records
+```
+
+```{r Preprocess data CA, echo = FALSE, include = FALSE}
+# source("undp_preprocess.R") # Clean data bases
+```
+
+```{r Readfeeling Function (Loads all datasets), include = FALSE}
+# Functions
+# Alternatively:
+# source("myreadfeeling.R") # Read and clear data bases
+readfeeling <- function(fname,myLevs=3){
+  require(xlsx)
+  # myLevs: Number of levels: 3 or 5 (leave original #levels unaltered?)
+  # Default: myLevs <- 3
+  Lev3 <- c("negative","neutral","positive")
+  clev3 <- c(-1,0,1)
+  Lev5 <- c("strongly negative","negative","neutral","positive","strongly positive")
+  clev5 <- c(-1,-0.5,0,0.5,1)
+  #print(paste("Data",fname))
+  data <- read.xlsx2(fname,1) # Works and fast (NA become void or 0)
+  N <- dim(data)[1]
+  #print(paste(" #records=",N,"\n"))
+  # Different countries have different field names for the feeling, all starting with Q1.Feeling
+  # Force naming them Q1.Feeling
+  # First find the column matching "Q1."
+  ind <- pmatch("Q1", names(data))
+  # Then force renaming that column "Q1.Feeling"
+  names(data)[ind] <- "Q1.Feeling"
+  # Remove dots from filed names because some countries have and some not
+  # "." has to be written as a special character "\\."
+  names(data) <- gsub("\\.","",names(data))
+  data$feeling <- data$Q1Feeling
+  data$feeling[data$feeling==""] <- NA
+  feeling_Nlev <- length(levels(data$feeling)) # Numer of levels of feeling
+  # Some missing data generate a new level. Discard them
+  if ("" %in% levels(data$feeling))
+    feeling_Nlev <- feeling_Nlev-1
+  # Some countries have data only on 3 levels (strongly is lacking)
+  # For uniformity revert feeling to 3 levels
+  if (myLevs == 3) {
+    if (feeling_Nlev==5) {
+      # Some countries have 5 levels of feeling (include "strongly")
+      # Convert "strongly negative" to "negative" and "strongly positive" to "positive"
+      data$feeling[data$feeling=="strongly negative"] <- "negative"
+      data$feeling[data$feeling=="strongly positive"] <- "positive"
+      # Drop former "strongly" levels
+      data$feeling <- droplevels(data$feeling)
+    }
+    # Set Nlev to 3
+    feeling_Nlev <- 3
+    Lev <- Lev3
+    clev <- clev3
+  }
+  if (myLevs == 5) {
+    if (feeling_Nlev==3) {
+      levels(data$feeling) <- Lev5
+      # Some countries have only 3 levels of feeling ("negative","neutral","positive")
+      # Convert "negative" to "strongly negative" and "positive" to "strongly positive"
+      data$feeling[data$feeling=="negative"] <- "strongly negative"
+      data$feeling[data$feeling=="positive"] <- "strongly positive"
+    }
+    # Set Nlev to 5
+    feeling_Nlev <- 5
+    Lev <- Lev5
+    clev <- clev5
+  }
+  
+  # Order the levels of feeling in the right order (otherwise ordered alphabetically)
+  data$feeling <- ordered(data$feeling, levels = Lev)
+  data$feeling_num <- rep(NA,N)
+  for (nlev in 1:feeling_Nlev)
+    data$feeling_num[data$feeling==levels(data$feeling)[nlev]] <- clev[nlev]
+  # feeling_avg <- mean(feeling_num,na.rm=TRUE)
+  # dum (the date and hour) is integer as coming from read.xlsx2
+  dum <- data$XEntryDate
+  # treated as character and then as numeric
+  data$timedate_num <- as.numeric(as.character(dum))
+  # Convert to day-time format
+  # from p. 31 of the xlsx pdf guide https://cran.r-project.org/web/packages/xlsx/xlsx.pdf
+  data$timedate <- as.POSIXct((data$timedate_num-25569)*86400, tz="GMT", origin="1970-01-01")
+  
+  return(data)
+}
+
+```
+
+```{r Chiara Country Object}
+# Initial parameters
+
+# Alternatively:
+# source("myparameters.R")
+Ncountry <- 5
+Country <- array(list(), Ncountry)
+
+# Country 1: Moldova
+Country[[1]] <- list(country = "Moldova", countrycode = "MDA", fname = "foimoldova2015_Standard.xlsx",
+                     latmin = 28, latmax = 48.5, lonmin = 26.5, lonmax = 30.5)
+# Country 2: Kyrgyzstan
+Country[[2]] <- list(country = "Kyrgyzstan", countrycode = "KGZ", fname = "foikyrg2015_Standard.xlsx",
+                     latmin = 39, latmax = 43.5, lonmin = 72, lonmax = 80.5)
+# Country 3: Serbia
+Country[[3]] <- list(country = "Serbia", countrycode = "SRB", fname = "foiserbia2015_Standard.xlsx",
+                     latmin = 42, latmax = 46.5, lonmin = 18.5, lonmax = 23)
+# Country 4: Tajikistan
+Country[[4]] <- list(country = "Tajikistan", countrycode = "TJK", fname = "tajikistan2015_Standard.xlsx",
+                     latmin = 36.5, latmax = 41.5, lonmin = 67, lonmax = 75.5)
+# Country 5: Yemen
+Country[[5]] <- list(country = "Yemen", countrycode = "YEM", fname = "foiyemen2015_Standard_english.xlsx",
+                     latmin = 12, latmax = 19, lonmin = 42, lonmax = 55)
+
+
+# Read and clean data bases (possibly to split in two parts)
+
+# Alternatively:
+# source("myread.R") # uses myreadfeeling
+timedate_num_all <- numeric(0)
+Country_all <- character(0)
+feeling_all <- numeric(0)
+
+data <- array(list(),Ncountry)
+for (ncountry in 1:Ncountry){
+  data[[ncountry]] <- readfeeling(Country[[ncountry]]$fname)
+  
+  if (ncountry == 1) {
+    # Convert to character because concatenating factors looses the factor property
+    feeling_all <- as.character(data[[ncountry]]$feeling)
+    timedate_num_all <- data[[ncountry]]$timedate_num
+    Country_all <- rep(Country[[ncountry]]$country,length(data[[ncountry]]$feeling))
+  } else {
+    feeling_all <- c(feeling_all,as.character(data[[ncountry]]$feeling))
+    timedate_num_all <- c(timedate_num_all,data[[ncountry]]$timedate_num)
+    Country_all <- c(Country_all,rep(Country[[ncountry]]$country,length(data[[ncountry]]$feeling)))
+  }
+}
+```
+
+World Map {data-orientation=columns}
+=====================================  
+  
+World Map {.sidebar}
+-------------------------------------
+  
+```{r}
+
+```
+
+Column
+-------------------------------------
+  
+### Average Feeling (Positive/Negative/Neutral) Reflected in MicroNarratives
+  
+```{r Feeling Map}
+
+renderPlotly({
+
+mycountries <- character(Ncountry)
+mycodes <- character(Ncountry)
+avg_feeling <- numeric(Ncountry)
+pos_feeling <- numeric(Ncountry)
+neg_feeling <- numeric(Ncountry)
+neu_feeling <- numeric(Ncountry)
+N_feeling <- numeric(Ncountry)
+minlat=100
+maxlat=-100
+minlon=200
+maxlon=-200
+for (ncountry in 1:Ncountry){
+  mycountries[ncountry] <- Country[[ncountry]]$country
+  mycodes[ncountry] <- Country[[ncountry]]$countrycode
+  avg_feeling[ncountry] <- mean(data[[ncountry]]$feeling_num,na.rm=TRUE)
+  pos_feeling[ncountry] <- sum(data[[ncountry]]$feeling_num>0,na.rm=TRUE)
+  neg_feeling[ncountry] <- sum(data[[ncountry]]$feeling_num<0,na.rm=TRUE)
+  neu_feeling[ncountry] <- sum(data[[ncountry]]$feeling_num==0,na.rm=TRUE)
+  N_feeling[ncountry] <- length(data[[ncountry]]$feeling_num)
+  minlat <- min(minlat,Country[[ncountry]]$latmin)
+  minlon <- min(minlon,Country[[ncountry]]$lonmin)
+  maxlat <- max(maxlat,Country[[ncountry]]$latmax)
+  maxlon <- max(maxlon,Country[[ncountry]]$lonmax)
+}
+
+df <- data.frame(country=mycountries,
+                 code=mycodes,
+                 feeling=avg_feeling,
+                 positive=pos_feeling,
+                 negative=neg_feeling,
+                 neutral=neu_feeling,
+                 N=N_feeling)
+
+df$hover <- with(df,paste(toupper(country)," ",
+                          "<br>Average feeling: ",format(feeling,digits=2),
+                          "<br>Negative: ",format(100*negative/N,digits=0),"%",
+                          "<br>Neutral: ",format(100*neutral/N,digits=0),"%",
+                          "<br>Positive: ",format(100*positive/N,digits=0),"%",
+                          sep=""))
+# light grey boundaries
+l <- list(color = toRGB("grey"), width = 0.5)
+
+# specify map projection/options
+g <- list(
+  showframe = FALSE,
+  showcoastlines = TRUE,
+  projection = list(type = 'Mercator'),
+  showland = TRUE,
+  landcolor = toRGB("grey83"),
+  #subunitcolor = toRGB("white"),
+  countrycolor = toRGB("white"),
+  showlakes = TRUE,
+  lakecolor = toRGB("white"),
+  #showsubunits = TRUE,
+  showcountries = TRUE,
+  resolution = 50,
+  countrywidth = 0.5,
+  subunitwidth = 0.5,
+  lonaxis=list(showgrid=TRUE,range=c(minlon,maxlon)),
+  lataxis=list(showgrid=TRUE,range=c(minlat,maxlat)),
+  showlakes=TRUE,
+  lakecolor = toRGB("white")
+  #  showcountry=TRUE
+)
+
+  plot_ly(df,
+        z = feeling,
+        locations = code,
+        type = 'choropleth',
+        color = feeling,
+        colors = c("red","yellow","blue","green"), # 'Blues',
+        marker = list(line = l),
+        colorbar = list(title = 'Feeling', 
+                        #yanchor="bottom",xanchor="left",
+                        # x=0, y=0,
+                        len=1),
+        hoverinfo = "text", #  "a",..., "text", "name" with a "+" OR "all" or "none".
+        text=hover
+) %>%
+  layout(title = '',
+         geo = g) %>%
+  add_trace(type="scattergeo",
+          locations = code, text = country, mode="text")
+
+})
+```
+
+Descriptive Statistics
+=====================================
+
+```{r Descriptive Stats}
+
+shinyAppFile("dynamic_stats_v3.R")
+
+```
+
+Feeling Over Time 
+=====================================  
+  
+Feeling {.sidebar}
+-------------------------------------
+  
+```{r Feeling Inputs}
+selectInput("Country", label = "Select Country",
+            choices = c("Moldova", "Kyrgyzstan", "Serbia", "Tajikistan", "Yemen"), selected = "Moldova")
+
+sliderInput("Cut_days", label = "Window length (days)",
+            min = 3, max = 30, value = 7, step = 1)
+```
+
+Choose Stories (upper left graph):
+  
+```{r Feeling Checkbox Inputs}
+checkboxInput("checkPos", "Positive Stories", T) 
+
+checkboxInput("checkNeu", "Neutral Stories", T)
+
+checkboxInput("checkNeg", "Negative Stories", T)
+```
+
+Row
+-------------------------------------
+  
+  
+### Percentage of Positive, Neutral and Negative Stories Over Time
+  
+```{r Day Cut}
+
+# Define input parameters to be exchanged
+#
+# Cut days is the window (in days) for analyzing time series
+
+reactCut_days <- reactive(input$Cut_days)
+reactncountry <- reactive({
+  switch(input$Country, "Moldova"={ncountry<-1},
+         "Kyrgyzstan"={ncountry<-2}, "Serbia"={ncountry<-3},
+         "Tajikistan"={ncountry<-4},"Yemen"={ncountry<-5})
+})  
+```
+
+```{r Feeling Pos Neu Neg Over Time}
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  
+  #    ncountry <- 1  # Used for testing
+  #    Cut_days <- 7  # Used for testing
+  
+  if (ncountry>0){ # Single countries
+    
+    
+    # Duplicated because not saved from the previous chunk
+    feeling_values <- as.numeric(levels(as.factor(data[[ncountry]]$feeling_num)))
+    
+    
+    # Time series of average feeling
+    #
+    mindate <- min(data[[ncountry]]$timedate_num)
+    maxdate <- max(data[[ncountry]]$timedate_num)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day (add Year?)
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    tab <- table(data[[ncountry]]$feeling,timedate_num_cut)
+    
+    # Compute Sums and Percentage Positive/Neutral/Negative
+    
+    feeling_sumsPos <- rep(0, Ncut)
+    feeling_sumsNeg <- rep(0, Ncut)
+    feeling_sumsNeu <- rep(0, Ncut)
+    
+    # sumsPos
+    for (ncut in 1:Ncut) {
+      feeling_sumsPos[ncut] <- tab[1, ncut]
+      feeling_sumsNeu[ncut] <- tab[2, ncut]
+      feeling_sumsNeg[ncut] <- tab[3, ncut]
+    }
+    
+    #sumsPos
+    #sumsNeg
+    #sumsNeu
+    
+    feeling_sumsTotal = feeling_sumsPos + feeling_sumsNeg + feeling_sumsNeu
+    
+    feeling_percentPos = feeling_sumsPos / feeling_sumsTotal * 100
+    feeling_percentNeg = feeling_sumsNeg / feeling_sumsTotal * 100
+    feeling_percentNeu = feeling_sumsNeu / feeling_sumsTotal * 100
+    
+    ### Plot
+    
+    dat <- data.frame(timedate_cutcenters, feeling_percentPos, feeling_percentNeu, feeling_percentNeg)
+    p <- ggplot(dat[!is.na(dat$feeling_percentPos),], aes(x = timedate_cutcenters, y = feeling_percentPos)) + geom_blank() + ylim(0, 100) 
+    p <- p + labs(x="Date",y="Percentage of Stories")
+    p <- p + ggtitle(Country[[ncountry]]$country)
+    print(p)
+    
+    if (input$checkNeg == T) {
+    p <- p + geom_line(data = dat[!is.na(dat$feeling_percentPos),], mapping = aes(x = timedate_cutcenters, y = feeling_percentPos), 
+                       colour = "sienna2", size = 1.5)
+    p <- p + geom_point(data = dat[!is.na(dat$feeling_percentPos),], mapping = aes(x = timedate_cutcenters, y = feeling_percentPos))
+    print(p)
+   }
+  
+  if (input$checkPos == T) {
+    p <- p + geom_line(data = dat[!is.na(dat$feeling_percentPos),], mapping = aes(x = timedate_cutcenters, y = feeling_percentNeg), 
+                       colour = "aquamarine4", size = 1.5)
+    p <- p + geom_point(data = dat[!is.na(dat$feeling_percentPos),], mapping = aes(x = timedate_cutcenters, y = feeling_percentNeg))
+    print(p)
+  } 
+  
+  if (input$checkNeu == T) {
+    p <- p + geom_line(data = dat[!is.na(dat$feeling_percentPos),], mapping = aes(x = timedate_cutcenters, y = feeling_percentNeu), 
+                       colour = "lightgoldenrod", size = 1.5)
+    p <- p + geom_point(data = dat[!is.na(dat$feeling_percentPos),], mapping = aes(x = timedate_cutcenters, y = feeling_percentNeu))
+    print(p)
+   }
+    
+  } # End of if (ncountry>0)
+  
+}) # End of renderPlot()
+
+``` 
+
+### Mean Trend
+
+```{r Feeling Mean Trend}
+
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+#   ncountry <- 1 # used for testing
+#   Cut_days <- 7 # Used for testing
+  
+  if (ncountry>0){ # Single countries
+    
+    # Duplicated because not saved from the previous chunk
+    feeling_values <- as.numeric(levels(as.factor(data[[ncountry]]$feeling_num)))
+    
+    #
+    # Time series of average feeling
+    #
+    mindate <- min(data[[ncountry]]$timedate_num)
+    maxdate <- max(data[[ncountry]]$timedate_num)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day (add Year?)
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    tab <- table(data[[ncountry]]$feeling,timedate_num_cut)
+    
+    # Compute Weighted mean and standard deviation inside bins
+    feeling_mean <- rep(0,Ncut)
+    feeling_std <- rep(0,Ncut)
+    for (ncut in 1:Ncut){
+      feeling_mean[ncut] <- weighted.mean(feeling_values,tab[,ncut])
+      feeling_std[ncut] <- sqrt(sum(tab[,ncut] * (feeling_values - feeling_mean[ncut])^2)/(sum(tab[,ncut])*(sum(tab[,ncut])-1)))
+    }
+    
+    mywidth <- (as.numeric(timedate_cutcenters[2])-as.numeric(timedate_cutcenters[1]))/5
+
+    dat <- data.frame(timedate_cutcenters, feeling_mean, feeling_std)
+    p <- ggplot(dat[!is.na(dat$feeling_mean),], aes(x = timedate_cutcenters, y = feeling_mean))  
+    p <- p + geom_line(colour = "lightgoldenrod", size = 1.5)
+    p <- p + geom_point()
+    p <- p + geom_errorbar(aes(x=timedate_cutcenters, ymin=feeling_mean-feeling_std, ymax=feeling_mean+feeling_std),
+                           width = mywidth)
+    p <- p + ggtitle(Country[[ncountry]]$country)
+    p <- p + labs(x="Date",y="Feeling")
+    p <- p + ylim(-1, 1)
+    print(p) # Mandatory if run with source, otherwise it does not print
+    
+    # Copy data[[ncountry]] into datadum because error in lm otherwise
+    datadum <- data[[ncountry]]
+    # Test by ANOVA whether the means in the bins are all equal
+    fit <- lm(formula = datadum$feeling_num ~ timedate_num_cut)
+    res <- anova(fit)
+    
+    print(paste("p-value of Test equal means (ANOVA):",res$`Pr(>F)`[1]))
+    
+  } # End of if (ncountry>0)
+  
+}) # End of renderPlot()
+
+
+``` 
+
+Row
+-------------------------------------
+  
+### Likert Plot
+  
+```{r Feeling Likert Plot}
+
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  
+  # Duplicated because not saved from the previous chunk
+  mindate <- min(data[[ncountry]]$timedate_num)
+  maxdate <- max(data[[ncountry]]$timedate_num)
+  Ncut <- ceiling((maxdate-mindate)/Cut_days)
+  print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+  
+  # Cut time interval into Ncut bins
+  # timedate_num_cut includes the reference bin of each data
+  # Increase the number of digits to 10 because default 5 digits only gives days
+  timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+  # The levels contain the boundaries of the bins
+  labs <- levels(timedate_num_cut)
+  # Convert from character to numeric removing parentheses (from the official documentation of cut)
+  # dum is a matrix with left and right boundaries as columns
+  dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+               as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+  # Compute the bin centers
+  timedate_num_cutcenter <- rowMeans(dum)
+  timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+  
+  timedate_cut <- timedate_num_cut
+  for (nlev in 1:length(levels(timedate_cut))){
+    dum <- as.character(timedate_cutcenters[nlev])
+    # Discard time and take only the day
+    dum <- substr(dum,1,10)
+    # Convert data. Take account that year is with 4 digits (20...)
+    dum <- as.Date(dum,"20%y-%m-%d")
+    # Convert date to Month day (add Year?)
+    levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+  }
+  # End duplication
+  
+  # Likert plots
+  
+  dflik <- data.frame(data[[ncountry]]$feeling)
+  # Change name of the variable because printed in the plot
+  names(dflik) <- Country[[ncountry]]$country
+  lik <- likert(dflik,grouping=timedate_cut)
+  # Using include.histrogram = TRUE is bugging with ggtitle(title) and ordering of the histogram
+  # Note that + ggtitle(Country[[ncountry]]$country) does not work when including histogram
+  plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",group.order=rev(levels(timedate_cut)),
+       label.completed = "Stories", label.missing = "NA", col = c("sienna2", "lightgoldenrod", "aquamarine4"),
+       xlab="# Stories")
+}) # End of renderPlot
+
+```
+
+Frequent Terms
+=====================================
+
+Frequent Terms {.sidebar}
+-------------------------------------
+
+```{r Frequent Terms Inputs}
+selectInput("FrequentTermsCountry", label = "Select Country",
+            choices = c("Moldova" = "moldova", "Kyrgyzstan" = "kyrgyzstan", "Serbia" = "serbia", "Tajikistan" = "tajikistan", "Yemen" = "yemen"),
+            selected = "moldova")
+```
+
+> **FREQUENT TERMS** 
+> **Wordclouds**: visualization tool showing the most frequent words appearing in the data. The bigger the word, the more frequent it is.
+
+> **Bar chart** : Another visualization tool for frequent terms. The most frequent words are displayed, and the frequency with which they appear on the texts is given by the y-axis value. 
+
+
+Column
+-------------------------------------
+
+### Word Cloud {data-height=650}
+
+```{r Moldova Term Frequency Setup , echo=FALSE}
+# moldova <- read.csv("Moldova_1.csv")
+# moldovatext <- Corpus(VectorSource(moldova$"Your.experience"))
+moldovatext <- Corpus(VectorSource(moldova_texts_eng))
+moldovatext <- tm_map(moldovatext, removePunctuation)
+
+for(j in seq(moldovatext)) {     #######(start Comment) Is this part still necessary after file has been cleaned by Charlie's code?       
+  moldovatext[[j]] <- gsub("/", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("@", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("\\|", " ", moldovatext[[j]]) 
+}  
+
+moldovatext <- tm_map(moldovatext, removeNumbers)  
+moldovatext <- tm_map(moldovatext, tolower)
+moldovatext <- tm_map(moldovatext, removeWords, stopwords("english")) 
+
+# library(SnowballC)   
+moldovatext <- tm_map(moldovatext, stemDocument) 
+moldovatext <- tm_map(moldovatext, stripWhitespace) 
+
+moldovatext <- tm_map(moldovatext, PlainTextDocument)  ################# (end Comment) ##########################################
+
+## Stage the data
+
+moldovadtm <- DocumentTermMatrix(moldovatext) 
+
+moldovatdm <- TermDocumentMatrix(moldovatext)   
+
+moldovafreq <- colSums(as.matrix(moldovadtm))   
+
+moldovafreq<-sort(moldovafreq, decreasing = TRUE)
+moldovafrequency<-head(moldovafreq, 20)
+
+moldovawf <- data.frame(moldovaword=names(moldovafrequency), moldovafrequency=moldovafrequency)
+
+moldovawf$moldovaword <- factor(moldovawf$moldovaword, levels =  moldovawf$moldovaword[order(moldovawf$moldovafreq, decreasing = TRUE)])
+
+```
+
+```{r Tagikistan Term Frequency Setup , echo=FALSE}
+# moldova <- read.csv("Moldova_1.csv")
+tajikistantext <- Corpus(VectorSource(tajikistan_texts_eng))
+tajikistantext <- tm_map(tajikistantext, removePunctuation)
+
+for(j in seq(tajikistantext)) {     #######(start Comment) Is this part still necessary after file has been cleaned by Charlie's code?       
+  tajikistantext[[j]] <- gsub("/", " ", tajikistantext[[j]])   
+  tajikistantext[[j]] <- gsub("@", " ", tajikistantext[[j]])   
+  tajikistantext[[j]] <- gsub("\\|", " ", tajikistantext[[j]]) 
+}  
+
+tajikistantext <- tm_map(tajikistantext, removeNumbers)  
+tajikistantext <- tm_map(tajikistantext, tolower)
+tajikistantext <- tm_map(tajikistantext, removeWords, stopwords("english")) 
+
+tajikistantext <- tm_map(tajikistantext, stemDocument) 
+tajikistantext <- tm_map(tajikistantext, stripWhitespace) 
+
+tajikistantext <- tm_map(tajikistantext, PlainTextDocument)  ################# (end Comment) ##########################################
+
+## Stage the data
+
+tajikistandtm <- DocumentTermMatrix(tajikistantext)   
+
+tajikistantdm <- TermDocumentMatrix(tajikistantext)   
+
+tajikistanfreq <- colSums(as.matrix(tajikistandtm)) 
+
+tajikistanfreq<-sort(tajikistanfreq, decreasing = TRUE)
+tajikistanfrequency<-head(tajikistanfreq, 20)
+
+tajikistanwf <- data.frame(tajikistanword=names(tajikistanfrequency), tajikistanfrequency=tajikistanfrequency)
+
+tajikistanwf$tajikistanword <- factor(tajikistanwf$tajikistanword, levels =  tajikistanwf$tajikistanword[order(tajikistanwf$tajikistanfreq, decreasing = TRUE)])
+```
+
+```{r Kyrgyzstan Term Frequency Setup , echo=FALSE}
+
+kyrgyzstantext <- Corpus(VectorSource(kyrgyzstan_texts_eng))
+kyrgyzstantext <- tm_map(kyrgyzstantext, removePunctuation)
+
+for(j in seq(kyrgyzstantext)) {     #######(start Comment) Is this part still necessary after file has been cleaned by Charlie's code?       
+  kyrgyzstantext[[j]] <- gsub("/", " ", kyrgyzstantext[[j]])   
+  kyrgyzstantext[[j]] <- gsub("@", " ", kyrgyzstantext[[j]])   
+  kyrgyzstantext[[j]] <- gsub("\\|", " ", kyrgyzstantext[[j]]) 
+} 
+
+kyrgyzstantext <- tm_map(kyrgyzstantext, removeNumbers)  
+kyrgyzstantext <- tm_map(kyrgyzstantext, tolower)
+kyrgyzstantext <- tm_map(kyrgyzstantext, removeWords, stopwords("english"))
+
+kyrgyzstantext <- tm_map(kyrgyzstantext, stemDocument) 
+kyrgyzstantext <- tm_map(kyrgyzstantext, stripWhitespace)
+
+kyrgyzstantext <- tm_map(kyrgyzstantext, PlainTextDocument)  ################# (end Comment) ##########################################
+
+## Stage the data
+
+kyrgyzstandtm <- DocumentTermMatrix(kyrgyzstantext)   
+
+kyrgyzstantdm <- TermDocumentMatrix(kyrgyzstantext)   
+
+kyrgyzstanfreq <- colSums(as.matrix(kyrgyzstandtm))   
+
+kyrgyzstanfreq<-sort(kyrgyzstanfreq, decreasing = TRUE)
+kyrgyzstanfrequency<-head(kyrgyzstanfreq, 20)
+
+kyrgyzstanwf <- data.frame(kyrgyzstanword=names(kyrgyzstanfrequency), kyrgyzstanfrequency=kyrgyzstanfrequency)
+
+kyrgyzstanwf$kyrgyzstanword <- factor(kyrgyzstanwf$kyrgyzstanword, levels =  kyrgyzstanwf$kyrgyzstanword[order(kyrgyzstanwf$kyrgyzstanfreq, decreasing = TRUE)])
+```
+
+```{r Serbia Term Frequency Setup , echo=FALSE}
+serbiatext <- Corpus(VectorSource(serbia_texts_eng))
+serbiatext <- tm_map(serbiatext, removePunctuation)
+
+for(j in seq(serbiatext)) {     #######(start Comment) Is this part still necessary after file has been cleaned by Charlie's code?       
+  serbiatext[[j]] <- gsub("/", " ", serbiatext[[j]])   
+  serbiatext[[j]] <- gsub("@", " ", serbiatext[[j]])   
+  serbiatext[[j]] <- gsub("\\|", " ", serbiatext[[j]]) 
+} 
+
+serbiatext <- tm_map(serbiatext, removeNumbers)  
+serbiatext <- tm_map(serbiatext, tolower)
+serbiatext <- tm_map(serbiatext, removeWords, stopwords("english"))
+
+# library(SnowballC)   
+serbiatext <- tm_map(serbiatext, stemDocument) 
+serbiatext <- tm_map(serbiatext, stripWhitespace)
+
+serbiatext <- tm_map(serbiatext, PlainTextDocument)  ################# (end Comment) ##########################################
+
+## Stage the data
+
+serbiadtm <- DocumentTermMatrix(serbiatext) 
+
+serbiatdm <- TermDocumentMatrix(serbiatext)   
+
+serbiafreq <- colSums(as.matrix(serbiadtm))   
+
+serbiafreq<-sort(serbiafreq, decreasing = TRUE)
+serbiafrequency<-head(serbiafreq, 20)
+
+serbiawf <- data.frame(serbiaword=names(serbiafrequency), serbiafrequency=serbiafrequency)
+
+serbiawf$serbiaword <- factor(serbiawf$serbiaword, levels =  serbiawf$serbiaword[order(serbiawf$serbiafreq, decreasing = TRUE)])
+```
+
+```{r Yemen Term Frequency Setup , echo=FALSE}
+
+yementext <- Corpus(VectorSource(yemen_texts_eng))
+yementext <- tm_map(yementext, removePunctuation)
+
+for(j in seq(yementext)) {     #######(start Comment) Is this part still necessary after file has been cleaned by Charlie's code?       
+  yementext[[j]] <- gsub("/", " ", yementext[[j]])   
+  yementext[[j]] <- gsub("@", " ", yementext[[j]])   
+  yementext[[j]] <- gsub("\\|", " ", yementext[[j]]) 
+} 
+
+yementext <- tm_map(yementext, removeNumbers)  
+yementext <- tm_map(yementext, tolower)
+yementext <- tm_map(yementext, removeWords, stopwords("english"))
+
+yementext <- tm_map(yementext, stemDocument) 
+yementext <- tm_map(yementext, stripWhitespace)
+
+yementext <- tm_map(yementext, PlainTextDocument)  ################# (end Comment) ##########################################
+
+## Stage the data
+
+yemendtm <- DocumentTermMatrix(yementext)   
+
+yementdm <- TermDocumentMatrix(yementext)   
+
+yemenfreq <- colSums(as.matrix(yemendtm))   
+
+yemenfreq<-sort(yemenfreq, decreasing = TRUE)
+yemenfrequency<-head(yemenfreq, 20)
+
+yemenwf <- data.frame(yemenword=names(yemenfrequency), yemenfrequency=yemenfrequency)
+
+yemenwf$yemenword <- factor(yemenwf$yemenword, levels =  yemenwf$yemenword[order(yemenwf$yemenfreq, decreasing = TRUE)])
+```
+
+```{r Unicef Term Frequency Setup , echo=FALSE}
+uniceftext <- Corpus(VectorSource(unicef_texts_eng))
+uniceftext <- tm_map(uniceftext, removePunctuation)
+
+for(j in seq(uniceftext)) {     #######(start Comment) Is this part still necessary after file has been cleaned by Charlie's code?       
+  uniceftext[[j]] <- gsub("/", " ", uniceftext[[j]])   
+  uniceftext[[j]] <- gsub("@", " ", uniceftext[[j]])   
+  uniceftext[[j]] <- gsub("\\|", " ", uniceftext[[j]]) 
+} 
+
+uniceftext <- tm_map(uniceftext, removeNumbers)  
+uniceftext <- tm_map(uniceftext, tolower)
+uniceftext <- tm_map(uniceftext, removeWords, stopwords("english"))
+
+uniceftext <- tm_map(uniceftext, stemDocument) 
+uniceftext <- tm_map(uniceftext, stripWhitespace)
+
+uniceftext <- tm_map(uniceftext, PlainTextDocument)  ################# (end Comment) ##########################################
+
+## Stage the data
+
+unicefdtm <- DocumentTermMatrix(uniceftext)   
+
+uniceftdm <- TermDocumentMatrix(uniceftext)   
+
+uniceffreq <- colSums(as.matrix(unicefdtm))   
+ 
+uniceffreq<-sort(uniceffreq, decreasing = TRUE)
+uniceffrequency<-head(uniceffreq, 20)
+
+unicefwf <- data.frame(unicefword=names(uniceffrequency), uniceffrequency=uniceffrequency)
+
+unicefwf$unicefword <- factor(unicefwf$unicefword, levels =  unicefwf$unicefword[order(unicefwf$uniceffreq, decreasing = TRUE)])
+```
+
+
+```{r WordCloud}
+
+renderPlot({  
+    wordcloud(names((get(paste0(input$FrequentTermsCountry, "freq")))), (get(paste0(input$FrequentTermsCountry, "freq"))), max.words = 30, scale=c(5, .1), random.color = FALSE, colors=brewer.pal(5, "Blues"))
+  })
+
+```
+
+### Bar chart {data-height=650}
+```{r  Frequent Terms}
+renderPlot({
+  ggplot(((get(paste0(input$FrequentTermsCountry,"wf")))), aes(((get(paste0(input$FrequentTermsCountry,"word")))),(get(paste0(input$FrequentTermsCountry ,"frequency"))))) + geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + ylab("Frequency") + xlab("Word") 
+})
+```
+
+
+Cluster Analysis
+=====================================
+
+Cluster Analysis {.sidebar}
+-------------------------------------
+
+```{r Cluster Analysis Inputs}
+selectInput("ClusterAnalysisCountry", label = "Select Country",
+            choices = c("Moldova" = "moldova", "Kyrgyzstan UNDP" = "kyrgyzstan", "Kyrgyzstan Unicef" = "unicef", "Serbia" = "serbia", 
+                        "Tajikistan" = "tajikistan", "Yemen" = "yemen"),
+            selected = "moldova")
+
+```
+
+>**CLUSTER ANALYSIS**
+> **Cluster dendogram**: Red line divides more frequent words in different clusters. Words in the same cluster are more likely to appear together in the same text.
+
+> **Cluster analysis**: another visualisation for clusters. Each color represents a different cluster. Words in the same clusters are more likely to appear together in the text. 
+
+Column
+------------------------------------
+
+### Dendogram {data-height=650}
+
+```{r Moldova Cluster Setup, include = FALSE}
+
+moldovadtmss <- removeSparseTerms(moldovadtm, 0.95) # This makes a matrix that is only 15% empty space, maximum.   
+# inspect(moldovadtmss) 
+
+# library(cluster)   
+moldovad <- dist(t(moldovadtmss), method="maximum")   
+moldovafit <- hclust(d=moldovad, method="ward")   
+# moldovafit   
+
+plot(moldovafit, hang=-1)  
+
+plot.new()
+plot(moldovafit, hang=-1)
+moldovagroups <- cutree(moldovafit, k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust(moldovafit, k=3, border="red")
+
+# library(fpc)   
+moldovad <- dist(t(moldovadtmss), method="maximum")   
+moldovakfit <- kmeans(moldovad, 3)   
+
+moldovadoo <- skmeans_xdist(t(moldovadtmss))   
+moldovakfitoo <- skmeans(moldovadoo,3)
+
+```
+
+```{r Tajikistan Cluster Setup, include = FALSE}
+
+tajikistandtmss <- removeSparseTerms(tajikistandtm, 0.80) # This makes a matrix that is only 15% empty space, maximum.   
+
+tajikistand <- dist(t(tajikistandtmss), method="maximum")   
+tajikistanfit <- hclust(d=tajikistand, method="ward")   
+   
+plot(tajikistanfit, hang=-1)  
+
+plot.new()
+plot(tajikistanfit, hang=-1)
+tajikistangroups <- cutree(tajikistanfit, k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust(tajikistanfit, k=3, border="red")
+
+# library(fpc)   
+tajikistand <- dist(t(tajikistandtmss), method="maximum")   
+tajikistankfit <- kmeans(tajikistand, 3)   
+
+tajikistandoo <- skmeans_xdist(t(tajikistandtmss))   
+tajikistankfitoo <- skmeans(tajikistandoo,3)
+```
+
+
+```{r Serbia Cluster Setup, include = FALSE}
+
+serbiadtmss <- removeSparseTerms(serbiadtm, 0.90) # This makes a matrix that is only 15% empty space, maximum.   
+
+serbiad <- dist(t(serbiadtmss), method="maximum")   
+serbiafit <- hclust(d=serbiad, method="ward")   
+   
+plot(serbiafit, hang=-1)  
+
+plot.new()
+plot(serbiafit, hang=-1)
+serbiagroups <- cutree(serbiafit, k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust(serbiafit, k=3, border="red")
+
+# library(fpc)   
+serbiad <- dist(t(serbiadtmss), method="maximum")   
+serbiakfit <- kmeans(serbiad, 3)   
+
+serbiadoo <- skmeans_xdist(t(serbiadtmss))   
+serbiakfitoo <- skmeans(serbiadoo,3)
+```
+
+```{r Kyrgyzstan Cluster Setup, include = FALSE}
+
+kyrgyzstandtmss <- removeSparseTerms(kyrgyzstandtm, 0.91) # This makes a matrix that is only 15% empty space, maximum.   
+
+kyrgyzstand <- dist(t(kyrgyzstandtmss), method="maximum")   
+kyrgyzstanfit <- hclust(d=kyrgyzstand, method="ward")   
+   
+plot(kyrgyzstanfit, hang=-1)  
+
+plot.new()
+plot(kyrgyzstanfit, hang=-1)
+kyrgyzstangroups <- cutree(kyrgyzstanfit, k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust(kyrgyzstanfit, k=3, border="red")
+
+# library(fpc)   
+kyrgyzstand <- dist(t(kyrgyzstandtmss), method="maximum")   
+kyrgyzstankfit <- kmeans(kyrgyzstand, 3)   
+
+kyrgyzstandoo <- skmeans_xdist(t(kyrgyzstandtmss))   
+kyrgyzstankfitoo <- skmeans(kyrgyzstandoo,3)
+```
+
+
+```{r Yemen Cluster Setup, include = FALSE}
+
+yemendtmss <- removeSparseTerms(yemendtm, 0.80) # This makes a matrix that is only 15% empty space, maximum.   
+
+yemend <- dist(t(yemendtmss), method="maximum")   
+yemenfit <- hclust(d=yemend, method="ward")   
+   
+plot(yemenfit, hang=-1)  
+
+plot.new()
+plot(yemenfit, hang=-1)
+yemengroups <- cutree(yemenfit, k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust(yemenfit, k=3, border="red")
+
+# library(fpc)   
+yemend <- dist(t(yemendtmss), method="maximum")   
+yemenkfit <- kmeans(yemend, 3)   
+
+yemendoo <- skmeans_xdist(t(yemendtmss))   
+yemenkfitoo <- skmeans(yemendoo,3)
+```
+
+```{r Unicef Cluster Setup, include = FALSE}
+
+unicefdtmss <- removeSparseTerms(unicefdtm, 0.93) # This makes a matrix that is only 15% empty space, maximum.   
+
+unicefd <- dist(t(unicefdtmss), method="maximum")   
+uniceffit <- hclust(d=unicefd, method="ward")   
+
+plot(uniceffit, hang=-1)  
+
+plot.new()
+plot(uniceffit, hang=-1)
+unicefgroups <- cutree(uniceffit, k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust(uniceffit, k=3, border="red")
+
+# library(fpc)   
+unicefd <- dist(t(unicefdtmss), method="maximum")   
+unicefkfit <- kmeans(unicefd, 3)   
+
+unicefdoo <- skmeans_xdist(t(unicefdtmss))   
+unicefkfitoo <- skmeans(unicefdoo,3)
+```
+
+```{r}
+renderPlot({
+    plot((get(paste0(input$ClusterAnalysisCountry, "fit"))), hang=-1)
+groups <- cutree((get(paste0(input$ClusterAnalysisCountry, "fit"))),k=3)   # "k=" defines the number of clusters you are using   
+rect.hclust((get(paste0(input$ClusterAnalysisCountry, "fit"))), k=3, border="red")
+})
+```
+
+### Cluster analysis {data-height=650}
+
+```{r}
+renderPlot({
+#   if (input$Country == "Moldova") {  
+# moldovad <- skmeans_xdist(t(moldovadtmss))   
+# moldovakfit <- skmeans(moldovad,3)   
+clusplot(as.matrix(get(paste0(input$ClusterAnalysisCountry, "doo"))), get(paste0(input$ClusterAnalysisCountry, "kfitoo"))$cluster, main = "CLUSTER ANALYSIS",
+         color=T, shade=T, labels=2, lines=0) 
+#  }
+})
+
+```
+
+
+Understanding Topics {data-navmenu="STM"}
+=====================================
+
+```{r STM Moldova Setup, include = FALSE}
+set.seed(67)
+temp<-textProcessor(documents=moldova$texts_eng,metadata=moldova)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<- out$documents
+vocab<-out$vocab
+moldovameta <-out$meta
+
+moldovameta$EntryDate <- as.numeric(moldovameta$EntryDate, format="%m/%d/%Y")
+moldovameta$DQ2.Gender <- as.factor(moldovameta$DQ2.Gender)
+moldovameta$DQ3.Education <- as.factor(moldovameta$DQ3.Education)
+moldovameta$DQ1.Age <- as.factor(moldovameta$DQ1.Age)
+
+moldovaSTM <- stm(docs, vocab, 12, prevalence  =~ DQ1.Age + EntryDate + DQ3.Education + DQ2.Gender + Q7.Score,  data = moldovameta) 
+
+
+```
+
+
+
+```{r STM Kyrgyzstan Setup, include = FALSE, eval = FALSE}
+set.seed(28)
+temp<-textProcessor(documents=kyrgyzstan$texts_eng,metadata=kyrgyzstan)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+kyrgyzstanmeta <-out$meta
+
+
+kyrgyzstanmeta$Q7.Score <- as.factor(kyrgyzstanmeta$Q7.Score)
+kyrgyzstanmeta$DQ2.Gender <- as.factor(kyrgyzstanmeta$DQ2.Gender)
+kyrgyzstanmeta$EntryDate <- as.factor(as.Date(kyrgyzstanmeta$EntryDate, format="%m/%d/%Y"))
+kyrgyzstanmeta$DQ3.Education <- as.factor(kyrgyzstanmeta$DQ3.Education)
+kyrgyzstanmeta$DQ1.Age <- as.factor(kyrgyzstanmeta$DQ1.Age)
+names(kyrgyzstan)
+
+kyrgyzstanSTM <- stm(docs, vocab, 23, prevalence  =~ DQ1.Age + DQ2.Gender + DQ3.Education + Q7.Score, data = kyrgyzstanmeta) 
+```
+
+
+```{r STM Yemen Setup, include = FALSE, eval = FALSE}
+set.seed(17)
+temp<-textProcessor(documents=yemen$texts_eng,metadata=yemen)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+yemenmeta <-out$meta
+
+
+yemenmeta$Q7.Score <- as.factor(yemenmeta$Q7.Score)
+yemenmeta$DQ1.Age <- as.factor(yemenmeta$DQ1.Age)
+yemenmeta$DQ4.Education. <- as.factor(yemenmeta$DQ4.Education.)
+yemenmeta$DQ2.Gender. <- as.factor(yemenmeta$DQ2.Gender.)
+yemenmeta$EntryDate <- as.numeric(yemenmeta$EntryDate)
+
+yemenSTM <- stm(docs, vocab,
+               K           = 23,
+               prevalence  =~ DQ1.Age + DQ1.Age + Q7.Score + DQ4.Education. + DQ2.Gender., data = yemenmeta)
+
+```
+
+
+```{r STM Serbia Setup, include = FALSE, eval = FALSE}
+set.seed(56)
+names(serbia)
+temp<-textProcessor(documents=serbia$texts_eng,metadata=serbia)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+serbiameta <-out$meta
+
+serbiameta$DQ1.Gender <- as.factor(serbiameta$DQ1.Gender)
+serbiameta$EntryDate <- as.numeric(as.Date(serbiameta$EntryDate, format="%m/%d/%Y"))
+serbiameta$DQ6.Education <- as.factor(serbiameta$DQ6.Education)
+serbiameta$DQ5.Age <- as.factor(serbiameta$DQ5.Age)
+
+
+serbiaSTM <- stm(docs, vocab, 22, prevalence  =~ DQ5.Age + DQ1.Gender + EntryDate + DQ6.Education, data = serbiameta) 
+```
+
+
+```{r STM Tajikistan Setup, include = FALSE, eval = FALSE}
+set.seed(89)
+
+temp<-textProcessor(documents=tajikistan$texts_org,metadata=tajikistan)
+#Remeber to change to texts_eng when it works
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+tajikistanmeta <-out$meta
+
+tajikistanmeta$R1.Gender <- as.factor(tajikistanmeta$R1.Gender)
+tajikistanmeta$EntryDate <- as.Date(tajikistanmeta$EntryDate, format="%m/%d/%Y")
+tajikistanmeta$R2.Age <- as.factor(tajikistanmeta$R2.Age)
+tajikistanmeta$Q5.Score <- as.factor(tajikistanmeta$Q5.Score)
+
+
+tajikistanSTM <- stm(docs, vocab, 20, prevalence  =~ R2.Age + R1.Gender + EntryDate + Q5.Score, data = tajikistanmeta) 
+```
+
+
+```{r STM unicef Setup, include = FALSE, eval = FALSE}
+set.seed(76)
+temp<-textProcessor(documents=unicef$texts_eng,metadata=unicef)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+unicefmeta <-out$meta
+
+unicefmeta$DQ2.Gender <- as.factor(unicefmeta$DQ2.Gender)
+unicefmeta$EntryDate <- as.Date(unicefmeta$EntryDate, format="%m/%d/%Y")
+unicefmeta$DQ1.Age <- as.factor(unicefmeta$DQ1.Age)
+unicefmeta$DQ3.Education <- as.factor(unicefmeta$DQ3.Education)
+
+unicefSTM <- stm(docs, vocab, 22, prevalence  =~ DQ1.Age + DQ2.Gender + EntryDate + DQ3.Education , data = unicefmeta) 
+```
+
+
+
+
+
+Understanding Topics {.sidebar}
+-------------------------------------
+  
+```{r}
+selectInput("STMCountry", label = "Select Country",
+            choices = c("Moldova" = "moldova", "Kyrgyzstan UNDP" = "kyrgyzstan", "Kyrgyzstan Unicef" = "unicef", "Serbia" = "serbia", 
+                        "Tajikistan" = "tajikistan", "Yemen" = "yemen"),
+            selected = "moldova")
+
+reactncountry <- reactive({
+  switch(input$STMCountry, "moldova"= {country<-1},
+         "kyrgyzstan"= {country<-2},
+         "serbia"= {country<-3},
+         "tajikistan"= {country<-4},
+         "yemen"= {country<-5},
+         "unicef"= {country<-6})
+})  
+
+
+renderUI({
+
+ncountry <- reactncountry()
+
+if (ncountry == 1) {
+  selectInput("STMTopics", label = "Select Topic",
+               choices = c("Topic 1", "Topic 2", "Topic 3", "Topic 4", 
+                           "Topic 5", "Topic 6", "Topic 7", "Topic 8", 
+                           "Topic 9", "Topic 10", "Topic 11", "Topic 12"), 
+               selected = 1)
+} else if (ncountry == 2) {
+  selectInput("STMTopics", label = "Select Topic",
+             choices = c("Topic 1", "Topic 2", "Topic 3", "Topic 4", 
+                         "Topic 5", "Topic 6", "Topic 7", "Topic 8", 
+                         "Topic 9", "Topic 10", "Topic 11", "Topic 12",
+                         "Topic 13", "Topic 14", "Topic 15", "Topic 16",
+                         "Topic 17", "Topic 18", "Topic 19", "Topic 20",
+                         "Topic 21", "Topic 22"), 
+             selected = 1)
+} else if (ncountry == 3) {
+  selectInput("STMTopics", label = "Select Topic",
+             choices = c("Topic 1", "Topic 2", "Topic 3", "Topic 4", 
+                         "Topic 5", "Topic 6", "Topic 7", "Topic 8", 
+                         "Topic 9", "Topic 10", "Topic 11", "Topic 12",
+                         "Topic 13", "Topic 14", "Topic 15", "Topic 16",
+                         "Topic 17", "Topic 18", "Topic 19", "Topic 20",
+                         "Topic 21", "Topic 22", "Topic 23"), 
+             selected = 1)
+} else if (ncountry == 4) {
+  selectInput("STMTopics", label = "Select Topic",
+             choices = c("Topic 1", "Topic 2", "Topic 3", "Topic 4", 
+                         "Topic 5", "Topic 6", "Topic 7", "Topic 8", 
+                         "Topic 9", "Topic 10", "Topic 11", "Topic 12",
+                         "Topic 13", "Topic 14", "Topic 15", "Topic 16",
+                         "Topic 17", "Topic 18", "Topic 19", "Topic 20"), 
+             selected = 1)
+} else if (ncountry == 5) {
+  selectInput("STMTopics", label = "Select Topic",
+             choices = c("Topic 1", "Topic 2", "Topic 3", "Topic 4", 
+                         "Topic 5", "Topic 6", "Topic 7", "Topic 8", 
+                         "Topic 9", "Topic 10", "Topic 11", "Topic 12",
+                         "Topic 13", "Topic 14", "Topic 15", "Topic 16",
+                         "Topic 17", "Topic 18", "Topic 19", "Topic 20",
+                         "Topic 21", "Topic 22", "Topic 23"), 
+             selected = 1)
+} else if (ncountry == 6) {
+  selectInput("STMTopics", label = "Select Topic",
+             choices = c("Topic 1", "Topic 2", "Topic 3", "Topic 4", 
+                         "Topic 5", "Topic 6", "Topic 7", "Topic 8", 
+                         "Topic 9", "Topic 10", "Topic 11", "Topic 12",
+                         "Topic 13", "Topic 14", "Topic 15", "Topic 16",
+                         "Topic 17", "Topic 18", "Topic 19", "Topic 20",
+                         "Topic 21", "Topic 22"), 
+             selected = 1)
+}
+})
+
+reactntopics <- reactive({
+  switch(input$STMTopics, "Topic 1"= {topics <- 1},
+         "Topic 2"= {topics <- 2},
+         "Topic 3"= {topics <- 3},
+         "Topic 4"= {topics <- 4},
+         "Topic 5"= {topics <- 5},
+         "Topic 6"= {topics <- 6},
+         "Topic 7"= {topics <- 7},
+         "Topic 8"= {topics <- 8},
+         "Topic 9"= {topics <- 9},
+         "Topic 10"= {topics <- 10},
+         "Topic 11"= {topics <- 11},
+         "Topic 12"= {topics <- 12},
+         "Topic 13"= {topics <- 13},
+         "Topic 14"= {topics <- 14},
+         "Topic 15"= {topics <- 15},
+         "Topic 16"= {topics <- 16},
+         "Topic 17"= {topics <- 17},
+         "Topic 18"= {topics <- 18},
+         "Topic 19"= {topics <- 19},
+         "Topic 20"= {topics <- 20},
+         "Topic 21"= {topics <- 21},
+         "Topic 22"= {topics <- 22},
+         "Topic 23"= {topics <- 23})
+})  
+
+```
+
+Topic Labels {data-height=250}
+-------------------------------------
+
+### Topic Labels
+
+
+```{r, echo = FALSE}
+
+renderPrint({
+  ntopics <- reactntopics()
+  
+  labelTopics(get(paste0(input$STMCountry, "STM")), topics = ntopics, n = 16, frexweight = 0.5)
+})
+```
+
+Topic Wordcloudsand Representative Stories {data-height=750}
+-------------------------------------
+  
+### Topic Wordcloud 
+  
+```{r, echo=FALSE}
+renderPlot({
+  
+  ntopics <- reactntopics()
+  
+  cloud(get(paste0(input$STMCountry, "STM")), topic = ntopics, type=c("model", "documents"))
+})
+
+```
+
+### Most Representative Stories
+
+```{r, echo=FALSE}
+
+renderPlot({
+  ntopics <- reactntopics()
+  plot(findThoughts(get(paste0(input$STMCountry, "STM")), texts = as.character(get(paste0(input$STMCountry, "meta"))$texts_eng), topics = ntopics, n=3) , width = 75)
+})
+
+```
+
+Topic Exploration {data-navmenu="STM"} 
+=====================================
+  
+Topic Exploration {.sidebar}
+-------------------------------------
+  
+```{r}
+selectInput("BrowserCountry", label = "Select Country",
+            choices = c("Moldova" = "moldova", "Kyrgyzstan UNDP" = "kyrgyzstan", "Kyrgyzstan Unicef" = "unicef", "Serbia" = "serbia", 
+                        "Tajikistan" = "tajikistan", "Yemen" = "yemen"),
+            selected = "moldova")
+
+```
+
+STM Browser {data-width=1000}
+-------------------------------------
+  
+### Topic modelling
+```{r, echo=FALSE, eval = TRUE}
+stmBrowser_widget(moldovaSTM, data=moldovameta, c("EntryDate","DQ1.Age","DQ3.Education", "DQ2.Gender", "Q7.Score"),text="texts_eng", labeltype='frex') 
+```
+
+Key Words in Context 
+=====================================
+  
+  KWIC {.sidebar}
+-------------------------------------
+  
+```{r}
+selectInput("KWICCountry", label = "Select Country",
+            choices = c("Moldova" = "moldova", "Kyrgyzstan UNDP" = "kyrgyzstan", "Kyrgyzstan Unicef" = "unicef", "Serbia" = "serbia", 
+                        "Tajikistan" = "tajikistan", "Yemen" = "yemen"),
+            selected = "moldova")
+```
+
+Search a Key Word in Context
+
+```{r}
+textInput("KWICInput", label = NULL, value = "job", placeholder = "e.g. job")
+```
+
+
+KWIC
+-------------------------------------
+  
+```{r KWIC Plot, echo = FALSE}
+renderTable({
+    KWICObject <- as.data.frame(kwic(get(paste0(input$KWICCountry, "_corpus")), input$KWICInput, window = 16)[,3:5])
+    colnames(KWICObject) <- c("Context Pre", "Key Word", "Context Post")
+    print(KWICObject, row.names = FALSE)
+})
+```
+
+Triads {data-orientation=rows}
+=====================================
+
+
+TRIADS {.sidebar}
+-------------------------------------
+
+```{r}
+
+
+selectInput("CountryT", label = "Select Country",
+            choices = c("Moldova", "Kyrgyzstan", "Serbia", "Tajikistan", "Yemen"), selected = "Moldova")
+
+reactncountryT <- reactive({
+ switch(input$CountryT, "Yemen" = {ncountry<-1},
+        "Kyrgyzstan" = {ncountry<-2}, "Moldova" = {ncountry<-3},
+        "Tajikistan" = {ncountry<-4}, "Serbia" = {ncountry<-5})
+})
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### T1
+
+
+```{r triad1, echo=FALSE, include=TRUE}
+
+# myLevs: Number of levels of Feeling: 3 or 5 (leave original #levels unaltered?)
+
+ myLevs <- 3
+Lev3 <- c("negative","neutral","positive")
+clev3 <- c(-1,0,1)
+Lev5 <- c("strongly negative","negative","neutral","positive","strongly positive")
+clev5 <- c(-1,-0.5,0,0.5,1)
+
+renderPlot({
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 1
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+### T2
+
+
+```{r triad2, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 2
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+### T3
+
+
+```{r triad3, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 3
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### T4
+
+
+```{r triad4, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 4
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+### T5
+
+
+```{r triad5, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 5
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+### T6
+
+
+```{r triad6, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 6
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### T7
+
+
+```{r triad7, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 7
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+### T8
+
+
+```{r triad8, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 8
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+### T9
+
+
+```{r triad9, echo=FALSE, include=TRUE}
+
+renderPlot({
+  
+  ncountry <- ncountry <- reactncountryT()
+  ntriads <- 9
+  
+  N <- length(data[[ncountry]]$FragmentID)
+  Ntriads <- length(Country[[ncountry]]$var_triads)
+  feeling_Nlev <- length(levels(data[[ncountry]]$feeling))
+  if (feeling_Nlev == 3) {
+    clev = clev3
+    Lev <- Lev3
+  } else {
+    clev <- clev5
+    Lev <- Lev5
+  }
+  
+  if (ntriads <= Ntriads) {
+    
+    whatT <- paste("T",ntriads,sep="")
+    #print(paste(Country[[ncountry]]$country,"Triad",whatT))
+    ind <- grep(whatT,names(data[[ncountry]]))
+    ind <- ind[1]
+    triad_3 <- matrix(0,nrow=N,ncol=3)
+    triad_2 <- matrix(0,nrow=N,ncol=2)
+    # Coerce triad_2 and triad_3 (which are lists of factors) to numeric matrices
+    for (i in 1:3) {
+      dum <- data[[ncountry]][,(ind+i-1):(ind+i-1)]
+      triad_3[,i] <- as.numeric((levels(dum))[dum])/100
+    }
+    for (i in 1:2) {
+      dum <- data[[ncountry]][,(ind+i+2):(ind+i+2)]
+      triad_2[,i] <- as.numeric(levels(dum))[dum]
+    }
+    mycols <- brewer.pal(feeling_Nlev, "Spectral")
+    mycols[(feeling_Nlev-1)/2+1] <- "#FFFF00" # Set neutral Yellow
+    mapping <- mycols
+    names(mapping) <- as.character(clev)
+    
+    ind <- which(!is.na(rowSums(triad_3)))
+    
+    myplot<- ggtern(data=data.frame(
+      x=triad_3[ind,1],y=triad_3[ind,2],z=triad_3[ind,3],
+      mycolfeeling=factor(data[[ncountry]]$feeling_num[ind])),
+      aes(x=x,y=y,z=z)) + 
+      geom_point(
+        aes(
+          color = mycolfeeling
+        ),
+        size=1,shape=16,alpha=0.5
+      ) +
+      scale_color_manual(values=mapping,labels=Lev) + 
+      labs(title = paste(
+        Country[[ncountry]]$country,
+        "-",
+        Country[[ncountry]]$var_triads[[ntriads]]$T
+        ),
+           color ="Feeling",
+           x     = Country[[ncountry]]$var_triads[[ntriads]]$TT[1],
+           y     = Country[[ncountry]]$var_triads[[ntriads]]$TT[2],
+           z     = Country[[ncountry]]$var_triads[[ntriads]]$TT[3]) +
+      theme_gray(base_size = 9) +
+      theme(legend.position      = c(0, 1),
+            legend.justification = c(0, 1),
+            legend.box.just      = 'left',
+            tern.axis.title.T=element_text(hjust=0.5),
+            tern.axis.title.R=element_text(hjust=1),
+            tern.axis.title.L=element_text(hjust=0)
+      )
+    
+    myplot
+    
+  }
+  
+}) # end of RenderPlot
+
+```
+
+
+FAQ
+==========================================
+
+**WORLD MAP**
+
+The first page displays a map which countries are included in GGGGGGGGGG and the average feeling of the respondents with regards to the narrative they have told. It is important to note that respondents were sharing narratives about widely different issues, so cross national comparison of average feeling doesn't necessarily make sense.  
+
+
+**FEELING OVER TIME**
+
+Three main charts are displayed on this page. Before interacting with them, select the country data that you wish to explore in the sidebar on the left. Furthermore, you may wish to observe trends over certain periods of time (e.g. on a weekly, bi-weekly, or monthly basis). This is what the "window length (days) slider allows you to define. For example, selecting 7 days provides weekly trends, 14 days provides bi-weekly trends, 30 days provides monthly trends, etc. By default, this value is set at 7 days. Percentage of Positive, Neutral and Negative Stories Over Time.                This chart allows you to observe time trends in the percentage stories that are qualified as positive, neutral and negative by their authors. Using the checkboxes in the sidebar on the left, you may wish to filter out certain types of stories. The percentage of positive, neutral and negative stories over time may allow you to gauge evolutions in the general feeling of local populations. 
+
+**MEAN TREND**
+
+The mean trend chart provides a mean score (from -1 to 1, where -1 is extremely negative and 1 is extremely positive) based on the proportion of positive, neutral and negative stories at each date interval. In order to obtain this score, negative stories were coded as "-1", neutral stories as "0" and positive stories as "1". Once again, this graph provides an insight into the evolution of populations' general feeling.
+
+
+**LIKERT PLOT**
+
+Similarly to the percentage of positive, neutral and negative stories over time plot, this Likert plot provides a breakdown of the percentage of positive, neutral and negative stories recorded for each date interval. To the right the Likert plot, you will find a histogram specifying the absolute number of stories collected at each date interval. 
+
+**DESCRIPTIVE**
+ddddgr
+
+**FREQUENT TERMS** 
+
+The frequent terms page gives a broad overview of the most frequent terms that appear in each country dataset. Two main charts are displayed on this page. Before interacting with them, select the country data that you wish to explore in the sidebar on the left. Note that numbers have been removed, all words have been set to lowercase and 'stop words' (words that are frequently used but have little conceptual meaning, such as "and", "the", or "a") have been removed.Furthermore, words have been "stemmed" (e.g. words like "politics", "politicians", "political" have all been group by their same root "politic").
+
+**Wordcluds**: Visualization tool showing the most frequent words appearing in the data. The bigger the word, the more frequent it is.
+
+**Bar chart**: This histogram provides a bit more information on the most frequent terms used throughout the stories of the country dataset collected. It lists the most frequent words in descending order, along with the number of times they appear in the data.
+
+Read more about wordclouds and frequency plot at the following link: https://rstudio-pubs-static.s3.amazonaws.com/31867_8236987cf0a8444e962ccd2aec46d9c3.html
+
+**CLUSTER ANALYSIS**
+
+The cluster analysis page gives a broad overview of how the different words come up in the text in each different country. Two main charts are displayed on this page. Before interacting with them, select the country data that you wish to explore in the sidebar on the left. Note that numbers have been removed, all words have been set to lowercase and 'stop words' (words that are frequently used but have little conceptual meaning, such as "and", "the", or "a") have been removed.Furthermore, words have been "stemmed" (e.g. words like "politics", "politicians", "political" have all been group by their same root "politic").
+
+**Cluster dendogram**: using hierarchical cluster analysis with maximum distance, it is possible to see how different stories group together. Different clusters are identified by the different groupings made by the red lines. 
+
+**Cluster analysis**: another visualisation for clusters. This time spherical k-means have been used to reduce the sparsity present in the data. Different clusters show how different words are likely to appear in similar texts. Hence, words that are on the same group color are more likely to appear together in the same text.
+
+Read more about dendograms and cluster analysis at the following link:https://rstudio-pubs-static.s3.amazonaws.com/31867_8236987cf0a8444e962ccd2aec46d9c3.html
+Read more about sparse data at the following link: http://www.cs.utexas.edu/users/inderjit/public_papers/concept_mlj.pdf
+
+
+**UNDERSTANDING TOPICS**
+
+Structural topic modelling is a form of topic modelling, which itself is a statistical model from machine learning and natural language processing. It discovers underlying topics in textual data. GGGGGGGGGGGGGG assigns the different micro narratives to a number of abstract topics. On the "Understand topics" page you can attempt to understand what the different topics are about and whether they are useful in your analysis."Higest prob" shows words with highest probability of being within a topic. "Frex" shows frequent and exclusive words within a topic. Therefore, while two topics might share high probability words, the likelihood for sharing "frex" words is less. "Lift" and "score" are other measures that are not relevant, unless you have experience with topic modeling.                             The word cloud graphically visualize a topic. The larger the displayed word are,  the more common they are in the text.The text on the right show three documents that the model assumes to be representative of the topic.      You can find more information about Structural Topic Modeling and read academic papers utilizing it here: http://structuraltopicmodel.com/
+
+**EXPLORE TOPICS**
+
+STM Brower is an interactive D3 visualisation created by Freeman, Chuang, Roberts, Stewart and Tingley (2015) (see: https://github.com/mroberts/stmBrowser) , that helps you explore the topics in the text and metadata covariate relationships (for example gender, education, etc.). Narratives will be displayed on the right side if you click on them. Narratives can be placed within multiple topics, so they are rarely fully within a single topic.
+
+**KEY WORDS IN CONTEXT** 
+
+The search bar on the left lets you search for words you are interested in and look at the sentences and words that surround them (their context). Please note that you can use a "*" to improve your search with words that share a number of letters, for example you can write pro* and you will get contexts for project and professional and such. Finally, when the interface says "Error: incorrect number of dimensions", what you have searched for can not be found in the data.
+
+**TRIADS/TRIANGLES** 
+
+Ternary plots show how the respondents answer with three dimensions. 

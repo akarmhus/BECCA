@@ -1,0 +1,915 @@
+---
+title: "Common Deliverable"
+output: 
+ flexdashboard::flex_dashboard:
+    orientation: rows
+    runtime: shiny
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r Load Packages, include=FALSE}
+
+library(tm)
+library(flexdashboard)
+library(shiny)
+library(quanteda)
+library(RYandexTranslate)
+library(stm)
+library(wordcloud)
+library(htmlwidgets)
+library(stmBrowser)
+library(devtools)
+library(jsonlite)
+library(SnowballC)
+library(ggplot2)
+library(cluster)
+library(fpc)
+library(xlsx)
+library(plotly)
+library(likert)
+library(grid)
+library(rJava)
+devtools::install_github("timelyportfolio/stmBrowser@htmlwidget") # This needs to be installed once
+
+
+```
+
+```{r Load Moldova Dataset, include=FALSE, echo=TRUE}
+##  SETUP
+# N.B: Knitr CANNOT DEAL with the "setwd" function. Even if the WD is already correct, if it reads "setwd" it will reset it to some random temp directory. Set your working directory before you knit, and it should be fine.
+##  Load Data
+
+dataset <- "moldova"
+save("dataset", file = "dataset.txt")
+
+# This needs to be set for "Data Cleaning.R" to work. (Choose from "kyrgyzstan", "moldova", "unicef", "serbia", "tajikistan", "yemen")
+```
+
+```{r Translation Switch, include=FALSE, echo=TRUE}
+## Switchboard
+
+switch_t <- 0 # Translation
+switch_c <- 1 # Corpus
+save(list = c("switch_c","switch_t"), file = "switches.RData")
+
+if (!exists("clean",where = .GlobalEnv))
+  {source("Data Cleaning.R", echo = TRUE)}
+```
+
+```{r Descriptive Stats, include=FALSE, echo = TRUE}
+##  Descriptive Statistics 
+
+# Currently works for Moldova, and will for Kyrgyzstan when we have more characters for Yandex.
+
+source("Descriptive Stat Builder.R", echo = TRUE) # ERROR: Errorin eval(expr, envir, enclos) : object 'DQ1.Age' not found
+
+search <- search()
+if (!is.na(match("clean", search))) {detach(clean)}
+if (!is.na(match("data", search))) {detach(data)}
+if (is.na(match("clean", search))) {attach(clean)}
+```
+
+```{r Readfeeling Function (Loads all datasets)}
+# Functions
+# Alternatively:
+# source("myreadfeeling.R") # Read and clear data bases
+readfeeling <- function(fname,myLevs=3){
+  require(xlsx)
+  # myLevs: Number of levels: 3 or 5 (leave original #levels unaltered?)
+  # Default: myLevs <- 3
+  Lev3 <- c("negative","neutral","positive")
+  clev3 <- c(-1,0,1)
+  Lev5 <- c("strongly negative","negative","neutral","positive","strongly positive")
+  clev5 <- c(-1,-0.5,0,0.5,1)
+  #print(paste("Data",fname))
+  data <- read.xlsx2(fname,1) # Works and fast (NA become void or 0)
+  N <- dim(data)[1]
+  #print(paste(" #records=",N,"\n"))
+  # Different countries have different field names for the feeling, all starting with Q1.Feeling
+  # Force naming them Q1.Feeling
+  # First find the column matching "Q1."
+  ind <- pmatch("Q1",names(data))
+  # Then force renaming that column "Q1.Feeling"
+  names(data)[ind] <- "Q1.Feeling"
+  # Remove dots from filed names because some countries have and some not
+  # "." has to be written as a special character "\\."
+  names(data) <- gsub("\\.","",names(data))
+  data$feeling <- data$Q1Feeling
+  data$feeling[data$feeling==""] <- NA
+  feeling_Nlev <- length(levels(data$feeling)) # Numer of levels of feeling
+  # Some missing data generate a new level. Discard them
+  if ("" %in% levels(data$feeling))
+    feeling_Nlev <- feeling_Nlev-1
+  # Some countries have data only on 3 levels (strongly is lacking)
+  # For uniformity revert feeling to 3 levels
+  if (myLevs == 3) {
+    if (feeling_Nlev==5) {
+      # Some countries have 5 levels of feeling (include "strongly")
+      # Convert "strongly negative" to "negative" and "strongly positive" to "positive"
+      data$feeling[data$feeling=="strongly negative"] <- "negative"
+      data$feeling[data$feeling=="strongly positive"] <- "positive"
+      # Drop former "strongly" levels
+      data$feeling <- droplevels(data$feeling)
+    }
+    # Set Nlev to 3
+    feeling_Nlev <- 3
+    Lev <- Lev3
+    clev <- clev3
+  }
+  if (myLevs == 5) {
+    if (feeling_Nlev==3) {
+      levels(data$feeling) <- Lev5
+      # Some countries have only 3 levels of feeling ("negative","neutral","positive")
+      # Convert "negative" to "strongly negative" and "positive" to "strongly positive"
+      data$feeling[data$feeling=="negative"] <- "strongly negative"
+      data$feeling[data$feeling=="positive"] <- "strongly positive"
+    }
+    # Set Nlev to 5
+    feeling_Nlev <- 5
+    Lev <- Lev5
+    clev <- clev5
+  }
+  
+  # Order the levels of feeling in the right order (otherwise ordered alphabetically)
+  data$feeling <- ordered(data$feeling, levels = Lev)
+  data$feeling_num <- rep(NA,N)
+  for (nlev in 1:feeling_Nlev)
+    data$feeling_num[data$feeling==levels(data$feeling)[nlev]] <- clev[nlev]
+  # feeling_avg <- mean(feeling_num,na.rm=TRUE)
+  # dum (the date and hour) is integer as coming from read.xlsx2
+  dum <- data$XEntryDate
+  # treated as character and then as numeric
+  data$timedate_num <- as.numeric(as.character(dum))
+  # Convert to day-time format
+  # from p. 31 of the xlsx pdf guide https://cran.r-project.org/web/packages/xlsx/xlsx.pdf
+  data$timedate <- as.POSIXct((data$timedate_num-25569)*86400, tz="GMT", origin="1970-01-01")
+  
+  return(data)
+}
+
+```
+
+```{r Chiara Country Object}
+# Initial parameters
+
+# Alternatively:
+# source("myparameters.R")
+Ncountry <- 5
+Country <- array(list(), Ncountry)
+# Country 1: Yemen
+Country[[1]] <- list(country = "Yemen", countrycode = "YEM", fname = "foiyemen2015_Standard_english.xlsx",
+                     latmin = 12, latmax = 19, lonmin = 42, lonmax = 55)
+# Country 2: Kirghizistan
+Country[[2]] <- list(country = "Kirghizistan", countrycode = "KGZ", fname = "foikyrg2015_Standard.xlsx",
+                     latmin = 39, latmax = 43.5, lonmin = 72, lonmax = 80.5)
+# Country 3: Moldova
+Country[[3]] <- list(country = "Moldova", countrycode = "MDA", fname = "foimoldova2015_Standard.xlsx",
+                     latmin = 28, latmax = 48.5, lonmin = 26.5, lonmax = 30.5)
+# Country 4: Tajikistan
+Country[[4]] <- list(country = "Tajikistan", countrycode = "TJK", fname = "tajikistan2015_Standard.xlsx",
+                     latmin = 36.5, latmax = 41.5, lonmin = 67, lonmax = 75.5)
+# Country 4: Serbia
+Country[[5]] <- list(country = "Serbia", countrycode = "SRB", fname = "foiserbia2015_Standard.xlsx",
+                     latmin = 42, latmax = 46.5, lonmin = 18.5, lonmax = 23)
+
+# Read and clean data bases (possibly to split in two parts)
+
+# Alternatively:
+# source("myread.R") # uses myreadfeeling
+#timedate_num_all <- numeric(0)
+#Country_all <- character(0)
+#feeling_all <- numeric(0)
+
+data <- array(list(),Ncountry)
+for (ncountry in 1:Ncountry){
+  data[[ncountry]] <- readfeeling(Country[[ncountry]]$fname)
+  
+  if (ncountry == 1) {
+    # Convert to character because concatenating factors looses the factor property
+    feeling_all <- as.character(data[[ncountry]]$feeling)
+    timedate_num_all <- data[[ncountry]]$timedate_num
+    Country_all <- rep(Country[[ncountry]]$country,length(data[[ncountry]]$feeling))
+  } else {
+    feeling_all <- c(feeling_all,as.character(data[[ncountry]]$feeling))
+    timedate_num_all <- c(timedate_num_all,data[[ncountry]]$timedate_num)
+    Country_all <- c(Country_all,rep(Country[[ncountry]]$country,length(data[[ncountry]]$feeling)))
+  }
+}
+```
+
+Topics {.sidebar}
+=============================================================================
+
+```{r}
+selectInput("Country", label = "Country",
+            choices = c("All","Yemen","Kirghizistan","Moldova","Tajikistan","Serbia"), selected = "Yemen")
+sliderInput("Cut_days", label = "Window length (days)",
+            min = 3, max = 30, value = 7, step = 1)
+
+# selectInput("list_of_topics", label = "Choose a topic:",
+#            choices = c("education", "health", "corruption", "migration"))
+
+# selectInput("gender", label = "Choose gender:", choices = (c("All", "Female", "Male")))
+
+# selectizeInput("age", label = "Choose age groups:", choices = (c("Under 17", "17-29", "30-44", "45-60", "Over 60")), multiple = TRUE)
+# 
+# selectizeInput("education", label = "Choose education level:", choices = c("No formal education", "Primary education", "Secondary education", "technical/vocational education", "university degree", "master and/or phd"), multiple = TRUE)
+# 
+# selectizeInput("employment", label = "Choose employment status:", choices = c("student", "salaried professional", "self employed/entrepreneur", "volunteer", "unemployed", "out of the workforce", "retired", "other"), multiple = TRUE)
+# 
+# selectizeInput("where", label = "Choose area:", choices = c("Urban", "Rural"), multiple = TRUE)
+# 
+# selectizeInput("levelofincome", label = "Choose income level:", choices = c("less than others in my community", "more or less the same", "more than others in the community"), multiple = TRUE)
+```
+
+Search a Key Word in Context
+
+```{r}
+textInput("KWICInput", label = NULL, value = "job", placeholder = "e.g. job")
+```
+
+World Map {data-orientation=columns}
+=====================================  
+
+Column {data-width=650}
+-------------------------------------
+
+### Map of Average Feeling (Positive/Negative/Neutral) Reflected in MicroNarratives Collected
+
+```{r Feeling Map}
+renderPlotly({
+
+mycountries <- character(Ncountry)
+mycodes <- character(Ncountry)
+avg_feeling <- numeric(Ncountry)
+minlat=100
+maxlat=-100
+minlon=200
+maxlon=-200
+for (ncountry in 1:Ncountry){
+  mycountries[ncountry] <- Country[[ncountry]]$country
+  mycodes[ncountry] <- Country[[ncountry]]$countrycode
+  avg_feeling[ncountry] <- mean(data[[ncountry]]$feeling_num,na.rm=TRUE)
+  minlat <- min(minlat,Country[[ncountry]]$latmin)
+  minlon <- min(minlon,Country[[ncountry]]$lonmin)
+  maxlat <- max(maxlat,Country[[ncountry]]$latmax)
+  maxlon <- max(maxlon,Country[[ncountry]]$lonmax)
+}
+
+df <- data.frame(country=mycountries,
+                 code=mycodes,
+                 feeling=avg_feeling)
+
+df$hover <- with(df,paste(country, " (",code,"). Average feeling: ",format(feeling,digits=2),sep=""))
+# light grey boundaries
+l <- list(color = toRGB("grey"), width = 0.5)
+
+# specify map projection/options
+g <- list(
+  showframe = FALSE,
+  showcoastlines = TRUE,
+  projection = list(type = 'Mercator'),
+  showland = TRUE,
+  landcolor = toRGB("grey83"),
+  #subunitcolor = toRGB("white"),
+  countrycolor = toRGB("white"),
+  showlakes = TRUE,
+  lakecolor = toRGB("white"),
+  #showsubunits = TRUE,
+  showcountries = TRUE,
+  resolution = 50,
+  countrywidth = 0.5,
+  subunitwidth = 0.5,
+  lonaxis=list(showgrid=TRUE,range=c(minlon,maxlon)),
+  lataxis=list(showgrid=TRUE,range=c(minlat,maxlat)),
+  showlakes=TRUE,
+  lakecolor = toRGB("white")
+  #  showcountry=TRUE
+)
+
+#print(
+  plot_ly(df,
+        z = feeling,
+        locations = code,
+        type = 'choropleth',
+        color = feeling,
+        colors = c("red","green"), # 'Blues',
+        marker = list(line = l),
+        colorbar = list(title = 'Feeling'),
+        hoverinfo = "text", #  "a",..., "text", "name" with a "+" OR "all" or "none".
+        text=hover
+) %>%
+  layout(title = '',
+         geo = g) %>%
+  add_trace(type="scattergeo",
+          locations = code, text = country, mode="text")
+#)
+  
+})
+```
+
+Column
+-------------------------------------
+
+### Countries data
+
+```{r}
+overview <- read.table("countries.csv", header = TRUE, sep = ";", dec = ",")
+knitr::kable(overview)
+```
+
+### Time trend of stories
+```{r}
+
+renderPlot({
+
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+
+    feeling_all <- factor(feeling_all)
+    mindate <- min(timedate_num_all)
+    maxdate <- max(timedate_num_all)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the whole time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(timedate_num_all,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day 
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    # Plot of percentage of answers over time by countries
+    dflik <- data.frame(Country_all)
+    names(dflik) <- "All countries"
+    lik <- likert(dflik,grouping=timedate_cut)
+    plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",
+         plot.percents=FALSE,include.center=FALSE,centered=FALSE,
+         plot.percent.low = FALSE, plot.percent.high = FALSE, plot.percent.neutral = FALSE,
+         color=rainbow(Ncountry),
+         label.completed = "Stories", label.missing = "NA",
+         group.order=rev(levels(timedate_cut)),
+         xlab="# Stories")
+
+})
+```
+
+Feeling (Positive/Negative) Over Time {data-orientation=rows}
+=====================================   
+
+Row
+-------------------------------------
+
+### Scatter plot
+
+```{r Cut Days}
+
+# Define input parameters to be exchanged
+#
+# Cut days is the window (in days) for analyzing time series
+
+reactCut_days <- reactive(input$Cut_days)
+reactncountry <- reactive({
+  switch(input$Country,"All"={ncountry<-0}, "Yemen"={ncountry<-1},
+         "Kirghizistan"={ncountry<-2}, "Moldova"={ncountry<-3},
+         "Tajikistan"={ncountry<-4},"Serbia"={ncountry<-5})
+})  
+```
+
+```{r Feeling Jitter Plot}
+renderPlot({
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  if (ncountry>0){ # Single countries
+    
+    feeling_values <- as.numeric(levels(as.factor(data[[ncountry]]$feeling_num)))
+    
+    # Convert to data.frame because of ggplot
+    df <- data.frame(timedate=data[[ncountry]]$timedate,feeling=data[[ncountry]]$feeling)
+    # Add some jitter to the feeling to avoid overlap of dots
+    p <- ggplot(na.omit(df),aes(x=timedate,y=feeling))
+    p <- p + geom_point(position=position_jitter(width=0,height=0.075))
+    p <- p + ggtitle(Country[[ncountry]]$country)
+    p <- p + labs(x="Time",y="Feeling")
+    print(p) # Mandatory if run with source, otherwise it does not print
+  }
+})
+```  
+
+### Mean Trend
+
+```{r Feeling Mean Trend}
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  
+  if (ncountry>0){ # Single countries
+    
+    
+    # Duplicated because not saved from the previous chunk
+    feeling_values <- as.numeric(levels(as.factor(data[[ncountry]]$feeling_num)))
+    
+    #
+    # Time series of average feeling
+    #
+    mindate <- min(data[[ncountry]]$timedate_num)
+    maxdate <- max(data[[ncountry]]$timedate_num)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day (add Year?)
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    tab <- table(data[[ncountry]]$feeling,timedate_num_cut)
+    
+    # Compute Weighted mean and standard deviation inside bins
+    feeling_mean <- rep(0,Ncut)
+    feeling_std <- rep(0,Ncut)
+    for (ncut in 1:Ncut){
+      feeling_mean[ncut] <- weighted.mean(feeling_values,tab[,ncut])
+      feeling_std[ncut] <- sqrt(sum(tab[,ncut] * (feeling_values - feeling_mean[ncut])^2)/(sum(tab[,ncut])*(sum(tab[,ncut])-1)))
+    }
+    
+    p <- qplot(timedate_cutcenters,feeling_mean)
+    p <- p + geom_errorbar(aes(x=timedate_cutcenters, ymin=feeling_mean-feeling_std, ymax=feeling_mean+feeling_std))
+    p <- p + ggtitle(Country[[ncountry]]$country)
+    p <- p + labs(x="Time",y="Feeling")
+    print(p) # Mandatory if run with source, otherwise it does not print
+    
+    # Copy data[[ncountry]] into datadum because error in lm otherwise
+    datadum <- data[[ncountry]]
+    # Test by ANOVA whether the means in the bins are all equal
+    fit <- lm(formula = datadum$feeling_num ~ timedate_num_cut)
+    res <- anova(fit)
+    
+    print(paste("p-value of Test equal means (ANOVA):",res$`Pr(>F)`[1]))
+    
+  } # End of if (ncountry>0)
+  
+}) # End of renderPlot()
+
+``` 
+
+Row
+-------------------------------------
+
+### Likert Plot
+
+```{r Feeling Likert Plot}
+renderPlot({
+  
+  ncountry <- reactncountry()
+  Cut_days <- reactCut_days() # equivalently input$Cut_days
+  
+  if (ncountry>0){ # Single countries
+    
+    # Duplicated because not saved from the previous chunk
+    mindate <- min(data[[ncountry]]$timedate_num)
+    maxdate <- max(data[[ncountry]]$timedate_num)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(data[[ncountry]]$timedate_num,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day (add Year?)
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    # End duplication
+    
+    # Likert plots
+    
+    dflik <- data.frame(data[[ncountry]]$feeling)
+    # Change name of the variable because printed in the plot
+    names(dflik) <- Country[[ncountry]]$country
+    lik <- likert(dflik,grouping=timedate_cut)
+    # Using include.histrogram = TRUE is bugging with ggtitle(title) and ordering of the histogram
+    # Note that + ggtitle(Country[[ncountry]]$country) does not work when including histogram
+    plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",group.order=rev(levels(timedate_cut)),
+         label.completed = "Stories", label.missing = "NA",
+         xlab="# Stories")
+    
+    
+    
+  } else { # All countries 
+    feeling_all <- factor(feeling_all)
+    mindate <- min(timedate_num_all)
+    maxdate <- max(timedate_num_all)
+    Ncut <- ceiling((maxdate-mindate)/Cut_days)
+    print(paste("#Bins for the whole time span:",Ncut,"(bin width in days:",Cut_days,")"))
+    
+    # Cut time interval into Ncut bins
+    # timedate_num_cut includes the reference bin of each data
+    # Increase the number of digits to 10 because default 5 digits only gives days
+    timedate_num_cut <- cut(timedate_num_all,Ncut,dig.lab=10)
+    # The levels contain the boundaries of the bins
+    labs <- levels(timedate_num_cut)
+    # Convert from character to numeric removing parentheses (from the official documentation of cut)
+    # dum is a matrix with left and right boundaries as columns
+    dum <- cbind(as.numeric( sub("\\((.+),.*", "\\1", labs) ),
+                 as.numeric( sub("[^,]*,([^]]*)\\]", "\\1", labs) ))
+    # Compute the bin centers
+    timedate_num_cutcenter <- rowMeans(dum)
+    timedate_cutcenters <- as.POSIXct((timedate_num_cutcenter-25569)*86400, tz="GMT", origin="1970-01-01")
+    
+    timedate_cut <- timedate_num_cut
+    for (nlev in 1:length(levels(timedate_cut))){
+      dum <- as.character(timedate_cutcenters[nlev])
+      # Discard time and take only the day
+      dum <- substr(dum,1,10)
+      # Convert data. Take account that year is with 4 digits (20...)
+      dum <- as.Date(dum,"20%y-%m-%d")
+      # Convert date to Month day 
+      levels(timedate_cut)[nlev] <- format(dum,"%b %d")
+    }
+    
+    # Plot of percentage of answers over time by countries
+    dflik <- data.frame(Country_all)
+    names(dflik) <- "All countries"
+    lik <- likert(dflik,grouping=timedate_cut)
+    plot(lik,TYPE="bar",include.histogram = TRUE,panel.arrange = "v",
+         plot.percents=FALSE,include.center=FALSE,centered=FALSE,
+         plot.percent.low = FALSE, plot.percent.high = FALSE, plot.percent.neutral = FALSE,
+         color=rainbow(Ncountry),
+         label.completed = "Stories", label.missing = "NA",
+         group.order=rev(levels(timedate_cut)),
+         xlab="# Stories")
+  }
+}) # End of renderPlot
+
+```
+
+
+
+
+Topic overview {data-navmenu="Kyrgyzstan"} 
+==============================================================================
+
+
+Text analysis {data-navmenu="Kyrgyzstan"}
+==============================================================================
+
+Stories {data-navmenu="Kyrgyzstan"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Kyrgyzstan"}
+==============================================================================
+
+
+Topic overview {data-navmenu="Moldova"}
+==============================================================================
+
+Row {data-height=650}
+------------------------------------------------------------------
+
+```{r, include=FALSE}
+moldova <- read.csv("Moldova_1.csv")
+
+moldovatext <- Corpus(VectorSource(moldova$"Your.experience"))
+moldovatext <- tm_map(moldovatext, removePunctuation)
+
+for(j in seq(moldovatext))   
+{   
+  moldovatext[[j]] <- gsub("/", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("@", " ", moldovatext[[j]])   
+  moldovatext[[j]] <- gsub("\\|", " ", moldovatext[[j]]) 
+}  
+
+moldovatext <- tm_map(moldovatext, removeNumbers)  
+moldovatext <- tm_map(moldovatext, tolower)
+moldovatext <- tm_map(moldovatext, removeWords, stopwords("english")) 
+
+# library(SnowballC)   
+moldovatext <- tm_map(moldovatext, stemDocument) 
+moldovatext <- tm_map(moldovatext, stripWhitespace) 
+
+moldovatext <- tm_map(moldovatext, PlainTextDocument) 
+
+## Stage the data
+
+dtm <- DocumentTermMatrix(moldovatext)   
+dtm   
+
+tdm <- TermDocumentMatrix(moldovatext)   
+tdm   
+
+freq <- colSums(as.matrix(dtm))   
+length(freq)  
+
+ord <- order(freq) 
+
+freq[head(ord)] 
+freq[tail(ord)] 
+
+head(table(freq), 20)  
+tail(table(freq), 20)  
+
+findFreqTerms(dtm, lowfreq=20)
+
+wf <- data.frame(word=names(freq), freq=freq)   
+head(wf)  
+
+```
+
+### Wordclouds
+
+```{r}
+#(wordcloud) 
+wordcloud(names(freq), freq, min.freq=20)
+```
+
+
+### Word frequency
+```{r}
+# library(ggplot2)   
+p <- ggplot(subset(wf, freq>20), aes(word, freq))    
+p <- p + geom_bar(stat="identity")   
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))   
+p
+```
+
+
+
+Text analysis {data-navmenu="Moldova"}
+==============================================================================
+```{r, include=FALSE}
+temp<-textProcessor(documents=clean$texts,metadata=clean)
+meta<-temp$meta
+vocab<-temp$vocab
+docs<-temp$documents
+out <- prepDocuments(docs, vocab, meta)
+docs<-out$documents
+vocab<-out$vocab
+meta <-out$meta
+meta$EntryDate <- as.Date(meta$EntryDate)
+meta$DQ2.Gender <- as.factor(meta$DQ2.Gender)
+meta$DQ3.Education <- as.factor(meta$DQ3.Education)
+meta$DQ1.Age <- as.factor(meta$DQ1.Age)
+
+```
+
+
+```{r, include=FALSE}
+#Run STM. We can include more metadata if we want
+ferdigB <- stm(docs, vocab, 8, prevalence  =~ EntryDate + DQ1.Age + DQ3.Education + DQ2.Gender + Q7.Score, data = meta)
+```
+
+
+Cluster analysis{data-navmenu="Moldova"}
+==========================================
+
+```{r, include = FALSE}
+dtmss <- removeSparseTerms(dtm, 0.95) # This makes a matrix that is only 15% empty space, maximum.   
+inspect(dtmss) 
+
+# library(cluster)   
+d <- dist(t(dtmss), method="euclidian")   
+fit <- hclust(d=d, method="ward")   
+fit   
+
+plot(fit, hang=-1)  
+
+plot.new()
+plot(fit, hang=-1)
+groups <- cutree(fit, k=5)   # "k=" defines the number of clusters you are using   
+rect.hclust(fit, k=5, border="red")
+
+# library(fpc)   
+d <- dist(t(dtmss), method="euclidian")   
+kfit <- kmeans(d, 2)   
+
+```
+
+```{r}
+clusplot(as.matrix(d), kfit$cluster, color=T, shade=T, labels=2, lines=0) 
+```
+
+
+Understand topics{data-navmenu="Moldova"}
+==========================================
+
+Column {.tabset}
+-------------------------------------
+   
+### Topic 1
+```{r}
+labelTopics(ferdigB, topics=1, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=1, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=1, n=1)
+plot(ff)
+```
+
+
+
+*** 
+"Higest prob" shows words with highest probability of being within a topic. "Frex" shows frequent and exclusive words within a topic. Therefore, while two topics might share high probability words, the likelihood for sharing "frex" words is less. Lift and score are other measures. The word cloud is a graphic visualisation of a topic. The larger a word is displayed the more common it is in the text. The text on the right shows a document that the model assumes to be indicative of the topic, in that it has high topic proportion score. 
+
+
+### Topic 2
+```{r}
+labelTopics(ferdigB, topics=2, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=2, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=2, n=1)
+plot(ff)
+```
+
+### Topic 3
+```{r}
+labelTopics(ferdigB, topics=3, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=3, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=3, n=1)
+plot(ff)
+```
+
+### Topic 4
+```{r}
+labelTopics(ferdigB, topics=4, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=4, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=meta$texts, topics=4, n=2)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=4, n=1)
+plot(ff)
+```
+
+### Topic 5
+```{r}
+labelTopics(ferdigB, topics=5, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=5, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=5, n=1)
+plot(ff)
+```
+
+### Topic 6
+```{r}
+labelTopics(ferdigB, topics=6, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=6, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=6, n=1)
+plot(ff)
+```
+
+### Topic 7
+```{r}
+labelTopics(ferdigB, topics=7, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=7, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=7, n=1)
+plot(ff)
+```
+
+### Topic 8
+```{r}
+labelTopics(ferdigB, topics=8, n = 16, frexweight = 0.5)
+cloud(ferdigB, topic=8, type=c("model", "documents"),
+      documents, thresh=.9, max.words=100)
+ff <- findThoughts(ferdigB, texts=as.character(meta$texts), topics=8, n=1)
+plot(ff)
+```
+
+
+
+
+Explore topics {data-navmenu="Moldova"}
+===================================== 
+```{r STM Browser, echo=FALSE}
+stmBrowser_widget(ferdigB, data=meta, c("EntryDate","DQ1.Age","DQ3.Education", "DQ2.Gender", "Q7.Score"),text="texts", labeltype='frex') 
+```
+
+
+Stories {data-navmenu="Moldova"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Moldova"}
+==============================================================================
+
+### Key Words in Context
+
+```{r Moldova KWIC}
+renderPrint({
+  options(width = 200)
+  print(as.data.frame(kwic(corpus, input$KWICInput)[,3:5]), row.names = F)
+})
+```
+
+
+Topic overview {data-navmenu="Serbia"}
+==============================================================================
+
+
+Text analysis {data-navmenu="Serbia"}
+==============================================================================
+
+Stories {data-navmenu="Serbia"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Serbia"}
+==============================================================================
+
+
+Topic overview {data-navmenu="Tajikistan"}
+==============================================================================
+
+Text analysis {data-navmenu="Tajikistan"}
+==============================================================================
+
+Stories {data-navmenu="Tajikistan"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Tajikistan"}
+==============================================================================
+
+
+Topic overview {data-navmenu="Yemen"}
+==============================================================================
+
+Text analysis {data-navmenu="Yemen"}
+==============================================================================
+
+Stories {data-navmenu="Yemen"}
+==============================================================================
+
+Key Words in Context {data-navmenu="Yemen"}
+==============================================================================
+
+
+### Chart A
+
+```{r}
+
+```
+
+### Chart B
+
+```{r}
+
+```
+
+### Chart C
+
+```{r}
+
+```
+
